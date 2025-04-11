@@ -1,4 +1,5 @@
 import torch
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 import torch.nn as nn
 import torch.nn.functional as F
 import random
@@ -33,7 +34,6 @@ class QNetwork(nn.Module):
 
     def forward(self, x):
         return self.net(x)
-    
 
 class DQNAgent:
     def __init__(
@@ -48,6 +48,8 @@ class DQNAgent:
 
         self.q_network = QNetwork(state_dim, action_dim)
         self.target_network = QNetwork(state_dim, action_dim)
+        self.q_network.to(device)
+        self.target_network.to(device)
         self.optimizer = torch.optim.Adam(self.q_network.parameters(), lr=lr)
 
         self.replay_buffer = deque(maxlen=buffer_size)
@@ -70,7 +72,7 @@ class DQNAgent:
         if random.random() < self.epsilon:
             return random.randint(0, self.action_dim - 1)
         with torch.no_grad():
-            state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+            state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
             q_values = self.q_network(state_tensor)
             return int(torch.argmax(q_values).item())
 
@@ -79,8 +81,8 @@ class DQNAgent:
 
         # Рассчитываем TD-ошибку
         with torch.no_grad():
-            state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
-            next_state_tensor = torch.tensor(next_state, dtype=torch.float32).unsqueeze(0)
+            state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
+            next_state_tensor = torch.tensor(next_state, dtype=torch.float32).unsqueeze(0).to(device)
             action_tensor = torch.tensor([[action]])
 
             q_val = self.q_network(state_tensor).gather(1, action_tensor)
@@ -103,11 +105,11 @@ class DQNAgent:
 
         states, actions, rewards, next_states, dones = zip(*batch)
 
-        states = torch.tensor(states, dtype=torch.float32)
-        actions = torch.tensor(actions).unsqueeze(1)
-        rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1)
-        next_states = torch.tensor(next_states, dtype=torch.float32)
-        dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1)
+        states = torch.tensor(states, dtype=torch.float32).to(device)
+        actions = torch.tensor(actions).unsqueeze(1).to(device)
+        rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(device)
+        next_states = torch.tensor(next_states, dtype=torch.float32).to(device)
+        dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(device)
 
         q_values = self.q_network(states).gather(1, actions)
         next_q_values = self.target_network(next_states).max(1, keepdim=True)[0].detach()
