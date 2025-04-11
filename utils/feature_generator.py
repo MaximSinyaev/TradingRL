@@ -27,8 +27,10 @@ class FeatureGenerator:
 
     def compute_ema(self, series: pd.Series, span: int) -> pd.Series:
         ema = series.ewm(span=span, adjust=False).mean()
-        ema.iloc[:span] = np.nan  # заменим на NaN до момента, когда EMA стабилизируется
-        print(f"Num nan values in EMA with span {span}: {ema.isna().sum()}")
+        # Следует еще обудмать необходимость замены значений до момента, когда EMA стабилизируется
+        # На данный момент dataset подрезается от ema_span
+        # ema.iloc[:span] = np.nan  # заменим на NaN до момента, когда EMA стабилизируется
+        # print(f"Num nan values in EMA with span {span}: {ema.isna().sum()}")
         return ema
 
     def compute_log_return(self, series: pd.Series) -> pd.Series:
@@ -73,14 +75,12 @@ class FeatureGenerator:
         for col in ['open', 'high', 'low', 'close']:
             norm_col = f'{col}_over_ema_{self.ema_span}'
             df[norm_col] = df[col] / (base_ema + 1e-9)
-            # df[norm_col] = df[norm_col].values.mask(np.arange(len(df[norm_col])) < self.ema_span, np.nan)
-            # df.loc[no_norm_mask, norm_col] = pd.NA  # Убираем значения до ema_span
-        
         return df
 
     def add_extra_emas(self, df: pd.DataFrame) -> pd.DataFrame:
         for span in self.extra_ema_spans:
             df[f'ema_{span}'] = self.compute_ema(df[self.price_col], span)
+            df[f'ema_{span}_norm'] = df[f'ema_{span}'] / (df['ema_base'] + 1e-9)
         return df
 
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -108,26 +108,29 @@ class FeatureGenerator:
         # 4. Остальные фичи
         df['log_return'] = self.compute_log_return(price)
         df['rsi'] = self.compute_rsi(price, self.rsi_period)
+        df['rsi_norm'] = df['rsi'] / 100
         df['normalized_volume'] = self.normalize_volume(volume, self.volume_ema_span)
 
         macd = self.compute_macd(price)
         df = df.join(macd)
+        df['macd_line_norm'] = df['macd_line'] / (df['ema_base'] + 1e-9)
+        df['macd_signal_norm'] = df['macd_signal'] / (df['ema_base'] + 1e-9)
+        df['macd_hist_norm'] = df['macd_hist'] / (df['ema_base'] + 1e-9)
 
         # 5. Формируем state_vector
         base_features = [
             f'open_over_ema_{self.ema_span}', f'high_over_ema_{self.ema_span}',
             f'low_over_ema_{self.ema_span}', f'close_over_ema_{self.ema_span}',
-            'log_return', 'rsi', 'normalized_volume', 'ema_base',
-            'macd_line', 'macd_signal', 'macd_hist',
+            'log_return', 'rsi_norm', 'normalized_volume',
+            'macd_line_norm', 'macd_signal_norm', 'macd_hist_norm',
         ]
-        ema_features = [f'ema_{span}' for span in self.extra_ema_spans]
+        ema_features = [f'ema_{span}_norm' for span in self.extra_ema_spans]
         ema_diff_features = (
             [f'ema_diff_{s}_{l}' for s, l in combinations([self.ema_span] + self.extra_ema_spans, 2)]
             if self.use_ema_diffs else []
         )
 
-        all_features = base_features + ema_features + ema_diff_features
-        df['state_vector'] = df[all_features].values.tolist()
+        df['state_vector'] = df[base_features + ema_features + ema_diff_features].values.tolist()
 
         # 6. Убираем строки до ema_span
         df = df.iloc[self.ema_span:].reset_index(drop=True)

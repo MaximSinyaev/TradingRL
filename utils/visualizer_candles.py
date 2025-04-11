@@ -18,7 +18,7 @@ class CandleChartVisualizer:
 
         return df[required_columns]
 
-    def plot_candlestick(self, data: pd.DataFrame, title: str = "Candlestick Chart"):
+    def plot_candlestick(self, data: pd.DataFrame, title: str = "Candlestick Chart", actions: pd.Series = None):
         data = self._prepare_data(data)
 
         widths = None
@@ -41,6 +41,29 @@ class CandleChartVisualizer:
             line_width=widths if self.use_volume_width else 1.0,
             name='Candles'
         ))
+
+        if actions is not None:
+            if len(actions) != len(data):
+                raise ValueError("Length of actions series must match data length")
+
+            buy_signals = data[actions == 'buy']
+            sell_signals = data[actions == 'sell']
+
+            fig.add_trace(go.Scatter(
+                x=buy_signals['timestamp'],
+                y=buy_signals['low'],
+                mode='markers',
+                marker=dict(symbol='triangle-up', color='lime', size=10),
+                name='Buy Signal'
+            ))
+
+            fig.add_trace(go.Scatter(
+                x=sell_signals['timestamp'],
+                y=sell_signals['high'],
+                mode='markers',
+                marker=dict(symbol='triangle-down', color='red', size=10),
+                name='Sell Signal'
+            ))
 
         fig.update_layout(
             title=title,
