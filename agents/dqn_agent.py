@@ -85,8 +85,8 @@ class DQNAgent:
             next_state_tensor = torch.tensor(next_state, dtype=torch.float32).unsqueeze(0).to(device)
             action_tensor = torch.tensor([[action]])
 
-            q_val = self.q_network(state_tensor).gather(1, action_tensor)
-            next_q_val = self.target_network(next_state_tensor).max(1, keepdim=True)[0]
+            q_val = self.q_network(state_tensor).detach().cpu().gather(1, action_tensor)
+            next_q_val = self.target_network(next_state_tensor).max(1, keepdim=True)[0].detach().cpu()
             td_error = torch.abs(reward + (1 - done) * self.gamma * next_q_val - q_val).item()
         
         self.td_errors.append(td_error)
