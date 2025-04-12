@@ -2,6 +2,7 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 from collections import deque
+import torch
 
 class FrameStackTradingEnvV1(gym.Env):
     metadata = {"render_modes": []}
@@ -9,13 +10,15 @@ class FrameStackTradingEnvV1(gym.Env):
     def __init__(
         self,
         base_env: gym.Env,
-        stack_size: int = 4
+        stack_size: int = 4,
+        return_pt: bool = False,
     ):
         super().__init__()
 
         self.base_env = base_env
         self.stack_size = stack_size
         self.frames = deque(maxlen=stack_size)
+        self.return_pt = return_pt
 
         low = np.repeat(self.base_env.observation_space.low, stack_size, axis=0)
         high = np.repeat(self.base_env.observation_space.high, stack_size, axis=0)
@@ -37,10 +40,15 @@ class FrameStackTradingEnvV1(gym.Env):
     def step(self, action):
         obs, reward, done, truncated, info = self.base_env.step(action)
         self.frames.append(obs)
+        # print(f"Stacked frames: {len(self.frames)}, type frame: {type(self.frames[0])}")
+        # print(f"Obs type: {type(self._get_obs())}, Obs shape: {self._get_obs().shape}")
         return self._get_obs(), reward, done, truncated, info
 
     def _get_obs(self):
-        return np.concatenate(list(self.frames), axis=0)
+        if self.return_pt:
+            return torch.cat(list(self.frames), dim=0)
+        else:
+            return np.concatenate(list(self.frames), axis=0)
 
     def render(self):
         return self.base_env.render()

@@ -1,8 +1,9 @@
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
+import torch
 
-class TradingEnvV1(gym.Env):
+class TradingEnvV1Torch(gym.Env):
     metadata = {"render_modes": []}
     actions_dict = {
         0: "hold",
@@ -47,7 +48,7 @@ class TradingEnvV1(gym.Env):
 
         if features.shape[0] != real_prices.shape[0]:
             raise ValueError("Количество строк в features и real_prices должно совпадать.")
-        self.features = features
+        self.features = torch.tensor(features, dtype=torch.float32)
         self.real_prices = real_prices  # <-- реальные цены для сделок и PnL
         self.initial_deposit = initial_deposit
         self.buy_fraction = buy_fraction
@@ -261,9 +262,9 @@ class TradingEnvV1(gym.Env):
         can_buy = float(self._can_buy())
         can_sell = float(self._can_sell())
 
-        obs = np.concatenate([
+        obs = torch.cat([
             features,
-            [
+            torch.tensor([
                 deposit_norm,
                 realized_deposit,
                 volume_norm,
@@ -272,9 +273,9 @@ class TradingEnvV1(gym.Env):
                 unrealized_pnl,
                 can_buy,
                 can_sell
-            ]
+            ], dtype=torch.float32)
         ])
-        return obs.astype(np.float32)
+        return obs
 
     def _can_buy(self):
         return self.deposit > 0.01 * self.initial_deposit
