@@ -130,4 +130,4 @@ class DQNAgent:
             self.td_errors[idx] = td_errors_new[i]
 
         self.epsilon = max(self.epsilon_end, self.epsilon * self.epsilon_decay)
-        # self.soft_update()
+        self.soft_update()

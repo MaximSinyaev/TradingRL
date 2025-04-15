@@ -3,7 +3,7 @@ import gymnasium as gym
 from gymnasium import spaces
 import torch
 
-class TradingEnvV1(gym.Env):
+class TradingEnvV2(gym.Env):
     metadata = {"render_modes": []}
     actions_dict = {
         0: "hold",
@@ -18,15 +18,10 @@ class TradingEnvV1(gym.Env):
         initial_deposit: float = 100.0,
         buy_fraction: float = 0.1,
         commission: float = 0.0005,
-        # max_inactivity_steps: int = 20,
-        inactivity_penalty: float = -1,
-        action_window_size: int = 240,
-        unused_capital_penalty: float = 0.01,
+        unused_capital_penalty: float = 2 ** -11,
         reward_on_trades_only: bool = False, # Выдавать награду только за сделки
         t_max: int = 1440,  # Максимальное количество шагов в эпизоде
-        impossible_action_penalty: float = 0.05,  # Штраф за невозможное действие
         warmup_steps = 0, # Количество шагов, которые нужно пропустить перед началом эпизода и за которые не будет начисляться награда
-        sell_scaling_factor = 5.0, # Фактор масштабирования для награды за продажу
         return_pt: bool = False, # Возвращать PyTorch тензор вместо numpy массива для вектора состояний
     ):
         """
@@ -60,19 +55,11 @@ class TradingEnvV1(gym.Env):
         self.initial_deposit = initial_deposit
         self.buy_fraction = buy_fraction
         self.commission = commission
-        # self.max_inactivity_steps = max_inactivity_steps
-        self.inactivity_penalty = inactivity_penalty
-        self.action_window_size = action_window_size  # ⬅️ через сколько шагов без действия прерывать
         self.unused_capital_penalty = unused_capital_penalty  # ⬅️ штраф за неиспользуемый депозит
         self.reward_on_trades_only = reward_on_trades_only  # Сохранение нового аргумента
         self.t_max = t_max + warmup_steps  # Сохранение нового аргумента
         self.warmup_steps = warmup_steps  # Количество шагов, которые нужно пропустить перед началом эпизода
-        self.impossible_action_penalty = impossible_action_penalty  # Штраф за невозможное действие
-        self.sell_scaling_factor = sell_scaling_factor # Фактор масштабирования для награды за продажу
         
-        
-        self.invalid_buy_streak = 0
-        self.invalid_sell_streak = 0
         
 
         self.num_features = features.shape[1]
@@ -97,15 +84,13 @@ class TradingEnvV1(gym.Env):
         np.random.seed(seed)
 
         if len(self.features) <= self.t_max:
-            self.start_index = 0
-            self.t_max = len(self.features) - 1
-        self.start_index = np.random.randint(0, len(self.features) - self.t_max)  # Новый код
-        self.current_step = self.start_index  # Новый код
+            raise ValueError("Размер features должен быть больше t_max + warmup_steps.")
+        self.start_index = np.random.randint(0, len(self.features) - self.t_max)
+        self.current_step = self.start_index
         self.deposit = self.initial_deposit
         self.positions = []  # <-- [(price, volume)]
         self.pnl = 0.0
         self.trades = []
-        self.inactive_steps = 0
 
         return self._get_observation(), {}
 
@@ -132,7 +117,7 @@ class TradingEnvV1(gym.Env):
         reward = 0.0
         price = self._get_current_price()
 
-        acted = False
+        previous_total_asset = self.deposit + sum(v * self._get_current_price() for _, v in self.positions)
 
         if action == 1:
             if self._can_buy():
@@ -142,87 +127,40 @@ class TradingEnvV1(gym.Env):
                 self.positions.append((price, volume))  # <-- теперь сохраняем объём
                 self.deposit -= amount_to_spend
                 self.trades.append(("buy", self.current_step, amount_to_spend, volume, price))
-                acted = True
-                self.invalid_buy_streak = 0
-            elif not self.reward_on_trades_only:
-                # штраф за попытку купить, когда нет средств
-                self.invalid_buy_streak += 1
-                reward -= self.impossible_action_penalty * self.invalid_buy_streak  # штраф за попытку купить, когда нет средств
 
         elif action == 2:
             if self._can_sell():
-                self.invalid_sell_streak = 0
-                
                 volumes = [v for _, v in self.positions]
                 avg_volume = np.mean(volumes)  # <-- средний объём
                 volume_to_sell = avg_volume
 
-                cost_basis = self._consume_positions(volume_to_sell)  # <-- списание из self.positions
                 total_value = volume_to_sell * price
                 total_value_after_fee = total_value * (1 - self.commission)
 
-                profit = total_value_after_fee - cost_basis
-                relative_profit = profit / self.initial_deposit * 100
-                # Old sell scaling
-                if relative_profit > 0:
-                    # reward += 2.5 * relative_profit
-                    reward += np.clip(relative_profit, -self.sell_scaling_factor, self.sell_scaling_factor) * 2
-                else:
-                    reward += np.clip(relative_profit, -self.sell_scaling_factor, self.sell_scaling_factor) * 1.
-                
+                _ = self._consume_positions(volume_to_sell)
                 self.deposit += total_value_after_fee
-                self.pnl += relative_profit
-                self.trades.append(("sell", self.current_step, cost_basis, price, volume_to_sell, profit, relative_profit))
-                acted = True
-            elif not self.reward_on_trades_only:
-                # штраф за попытку продать, когда нет позиций
-                self.invalid_sell_streak += 1
-                reward -= self.impossible_action_penalty * self.invalid_sell_streak  # штраф за попытку продать, когда нет позиций
+                self.trades.append(("sell", self.current_step, 0, price, volume_to_sell, total_value_after_fee))
                 
                 
         if self.current_step < self.warmup_steps:
             return self._get_observation(), reward, done, False, {}
 
-        # ⬇️ Проверка на бездействие
-        if not acted:
-            self.inactive_steps += 1
-            # unrealized = self._unrealized_pnl(price)
-            # if not self.reward_on_trades_only:  # Новая проверка
-            #     reward += 0.1 * unrealized
-                # if self.inactive_steps >= self.max_inactivity_steps:
-                #     reward += self.inactivity_penalty
-        else:
-            self.inactive_steps = 0  # сброс счётчика
-            if self.positions and not self.reward_on_trades_only:
-                reward += 0.2 * self._unrealized_pnl(price)
-                
-            
-        if not self.reward_on_trades_only:
-            reward -= self.unused_capital_penalty * (self.deposit / self.initial_deposit)  # штраф за неиспользуемый капитал
-
         self.current_step += 1
-        if not self.reward_on_trades_only:  # Новая проверка
-            if self.inactive_steps >= self.action_window_size:
-                done = True
-                reward += self.inactivity_penalty
                 
-        if self.current_step - self.start_index >= self.t_max:  # Изменённая проверка
+        if self.current_step - self.start_index >= self.t_max:
             done = True
         elif self.deposit <= 0 and not self.positions:
             done = True
         # Если эпизод завершён, считаем PnL по всем позициям по текущей цене
         if done and self.positions:
-            current_price = self._get_current_price()
-            total_volume = sum(v for _, v in self.positions)
-            cost_basis = self._consume_positions(total_volume)
-            total_value = total_volume * current_price * (1 - self.commission)
-            profit = total_value - cost_basis
-            self.deposit += total_value
-            self.pnl += profit / self.initial_deposit * 100
+            self.pnl = ((sum(v * self._get_current_price() for _, v in self.positions) + self.deposit) / self.initial_deposit - 1.0) * 100.0
+            
+        current_total_asset = self.deposit + sum(v * self._get_current_price() for _, v in self.positions)
+        reward = (current_total_asset - previous_total_asset) / self.initial_deposit * 0.1
+
         return self._get_observation(), reward, done, False, {}
     
     def _get_current_price(self):
-        # предполагаем, что feature[3] — это close price
         return self.real_prices[self.current_step]
     
     def _consume_positions(self, volume_to_sell: float) -> float:
