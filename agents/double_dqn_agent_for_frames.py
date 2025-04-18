@@ -1,5 +1,5 @@
 import torch
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 import torch.nn as nn
 import torch.nn.functional as F
 import random
@@ -27,14 +27,16 @@ class QCNNNetwork(nn.Module):
         )
         self.head = nn.Sequential(
             nn.Linear(128 * state_dim, 256),
+            nn.LayerNorm(256),
             nn.ReLU(),
             nn.Linear(256, 128),
+            nn.LayerNorm(128),
             nn.ReLU(),
             nn.Linear(128, action_dim)
         )
 
     def forward(self, x):
-        x = x.view(-1, self.num_frames, self.num_features)  # (B, 6, 19)
+        x = x.view(-1, self.num_frames, self.num_features)  # (B, n_frames, 19)
         x = self.conv(x)
         return self.head(x)
     
@@ -43,8 +45,15 @@ class DoubleDQNCNNAgent:
     def __init__(
         self, state_dim, action_dim, num_frames, lr=1e-3, gamma=0.99,
         batch_size=64, buffer_size=100_000, epsilon_start=1.0,
-        epsilon_end=0.1, epsilon_decay=0.995
+        epsilon_end=0.1, epsilon_decay=0.995, device=None
     ):
+        assert device in [None, "cpu", "cuda"], "device must be None, 'cpu' or 'cuda'"
+        if device is None:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        elif isinstance(device, str):
+            device = torch.device(device)
+        self.device = device
+        
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.gamma = gamma
@@ -52,8 +61,8 @@ class DoubleDQNCNNAgent:
 
         self.q_network = QCNNNetwork(state_dim, action_dim, num_frames=num_frames)
         self.target_network = QCNNNetwork(state_dim, action_dim, num_frames=num_frames)
-        self.q_network.to(device)
-        self.target_network.to(device)
+        self.q_network.to(self.device)
+        self.target_network.to(self.device)
         self.optimizer = torch.optim.Adam(self.q_network.parameters(), lr=lr)
 
         self.replay_buffer = deque(maxlen=buffer_size)
@@ -76,7 +85,7 @@ class DoubleDQNCNNAgent:
         if random.random() < self.epsilon:
             return random.randint(0, self.action_dim - 1)
         with torch.no_grad():
-            state_tensor = state.unsqueeze(0).to(device)
+            state_tensor = state.unsqueeze(0).to(self.device)
             q_values = self.q_network(state_tensor)
             return int(torch.argmax(q_values).item())
 
@@ -85,9 +94,9 @@ class DoubleDQNCNNAgent:
 
         # Рассчитываем TD-ошибку
         with torch.no_grad():
-            state_tensor = state.unsqueeze(0).to(device)
-            next_state_tensor = next_state.unsqueeze(0).to(device)
-            action_tensor = torch.tensor([[action]]).to(device)
+            state_tensor = state.unsqueeze(0).to(self.device)
+            next_state_tensor = next_state.unsqueeze(0).to(self.device)
+            action_tensor = torch.tensor([[action]]).to(self.device)
 
             q_val = self.q_network(state_tensor).detach().cpu().gather(1, action_tensor)
             # Double DQN: выбираем действие по q_network, оцениваем по target_network
@@ -111,11 +120,11 @@ class DoubleDQNCNNAgent:
 
         states, actions, rewards, next_states, dones = zip(*batch)
 
-        states = torch.stack(states).to(device)
-        actions = torch.tensor(actions).unsqueeze(1).to(device)
-        rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(device)
-        next_states = torch.stack(next_states).to(device)
-        dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(device)
+        states = torch.stack(states).to(self.device)
+        actions = torch.tensor(actions).unsqueeze(1).to(self.device)
+        rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(self.device)
+        next_states = torch.stack(next_states).to(self.device)
+        dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(self.device)
 
         q_values = self.q_network(states).gather(1, actions)
         # Double DQN: выбираем действие по q_network, оцениваем по target_network

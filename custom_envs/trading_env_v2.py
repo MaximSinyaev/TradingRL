@@ -156,7 +156,7 @@ class TradingEnvV2(gym.Env):
             self.pnl = ((sum(v * self._get_current_price() for _, v in self.positions) + self.deposit) / self.initial_deposit - 1.0) * 100.0
             
         current_total_asset = self.deposit + sum(v * self._get_current_price() for _, v in self.positions)
-        reward = (current_total_asset - previous_total_asset) / self.initial_deposit * 0.1
+        reward = (current_total_asset - previous_total_asset) / self.initial_deposit * 1.
 
         return self._get_observation(), reward, done, False, {}
     
