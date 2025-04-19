@@ -104,7 +104,7 @@ class DoubleDQNCNNAgent:
         with torch.no_grad():
             state_tensor = state.unsqueeze(0).to(self.device)
             next_state_tensor = next_state.unsqueeze(0).to(self.device)
-            action_tensor = torch.tensor([[action]]).to(self.device)
+            action_tensor = torch.tensor([[action]])
 
             q_val = self.q_network(state_tensor).detach().cpu().gather(1, action_tensor)
             # Double DQN: выбираем действие по q_network, оцениваем по target_network

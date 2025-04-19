@@ -152,7 +152,7 @@ class TradingEnvV2(gym.Env):
         elif self.deposit <= 0 and not self.positions:
             done = True
         # Если эпизод завершён, считаем PnL по всем позициям по текущей цене
-        if done and self.positions:
+        if done:
             self.pnl = ((sum(v * self._get_current_price() for _, v in self.positions) + self.deposit) / self.initial_deposit - 1.0) * 100.0
             
         current_total_asset = self.deposit + sum(v * self._get_current_price() for _, v in self.positions)
