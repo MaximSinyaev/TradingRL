@@ -1,5 +1,5 @@
 import torch
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 import torch.nn as nn
 import torch.nn.functional as F
 import random
@@ -13,17 +13,20 @@ class SafeBatchNorm1d(nn.BatchNorm1d):
             return input
         return super().forward(input)
 
-class QNetwork(nn.Module):
-    def __init__(self, state_dim: int, action_dim: int):
+class QCNNNetwork(nn.Module):
+    def __init__(self, state_dim: int, action_dim: int, num_frames: int, kernel_size: int=3):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(state_dim, 128),
-            nn.LayerNorm(128),
+        self.num_frames = num_frames
+        self.num_features = state_dim
+        self.conv = nn.Sequential(
+            nn.Conv1d(in_channels=state_dim, out_channels=64, kernel_size=kernel_size, padding=1),
             nn.ReLU(),
-            nn.Linear(128, 256),
-            nn.LayerNorm(256),
+            nn.Conv1d(64, 128, kernel_size=kernel_size, padding=1),
             nn.ReLU(),
-            nn.Linear(256, 128),
+            nn.Flatten()
+        )
+        self.head = nn.Sequential(
+            nn.Linear(128 * (num_frames), 128),
             nn.LayerNorm(128),
             nn.ReLU(),
             nn.Linear(128, 64),
@@ -33,23 +36,41 @@ class QNetwork(nn.Module):
         )
 
     def forward(self, x):
-        return self.net(x)
+        # X as input is (batch_size, num_frames, state_dim)
+        x = x.permute(0, 2, 1) # (B, n_features, n_frames)
+        x = self.conv(x)
+        # print(f"X shape after conv: {x.shape}")
+        return self.head(x)
+    
 
-class DQNAgent:
+class DoubleDQNCNNAgent:
     def __init__(
-        self, state_dim, action_dim, lr=1e-3, gamma=0.99,
+        self, state_dim, action_dim, num_frames, device=None, lr=7e-4, gamma=0.99,
         batch_size=64, buffer_size=100_000, epsilon_start=1.0,
-        epsilon_end=0.1, epsilon_decay=0.995
+        epsilon_end=0.1, epsilon_decay=0.995, gradient_clip=0.5,
+        kernel_size=3
     ):
+        assert device in [None, "cpu", "cuda"], "device must be None, 'cpu' or 'cuda'"
+        if device is None:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        elif isinstance(device, str):
+            device = torch.device(device)
+        self.device = device
+        
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.gamma = gamma
         self.batch_size = batch_size
+        
+        self.gradient_clip = gradient_clip
+        
+        if 2 * (kernel_size - 1) >= num_frames:
+            raise ValueError(f"kernel_size {kernel_size} is too large for num_frames {num_frames}.")
 
-        self.q_network = QNetwork(state_dim, action_dim)
-        self.target_network = QNetwork(state_dim, action_dim)
-        self.q_network.to(device)
-        self.target_network.to(device)
+        self.q_network = QCNNNetwork(state_dim, action_dim, num_frames=num_frames, kernel_size=kernel_size)
+        self.target_network = QCNNNetwork(state_dim, action_dim, num_frames=num_frames, kernel_size=kernel_size)
+        self.q_network.to(self.device)
+        self.target_network.to(self.device)
         self.optimizer = torch.optim.Adam(self.q_network.parameters(), lr=lr)
 
         self.replay_buffer = deque(maxlen=buffer_size)
@@ -72,7 +93,7 @@ class DQNAgent:
         if random.random() < self.epsilon:
             return random.randint(0, self.action_dim - 1)
         with torch.no_grad():
-            state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
+            state_tensor = state.unsqueeze(0).to(self.device)
             q_values = self.q_network(state_tensor)
             return int(torch.argmax(q_values).item())
 
@@ -81,12 +102,14 @@ class DQNAgent:
 
         # Рассчитываем TD-ошибку
         with torch.no_grad():
-            state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
-            next_state_tensor = torch.tensor(next_state, dtype=torch.float32).unsqueeze(0).to(device)
-            action_tensor = torch.tensor([[action]])
+            state_tensor = state.unsqueeze(0).to(self.device)
+            next_state_tensor = next_state.unsqueeze(0).to(self.device)
+            action_tensor = torch.tensor([[action]]).to(self.device)
 
             q_val = self.q_network(state_tensor).detach().cpu().gather(1, action_tensor)
-            next_q_val = self.target_network(next_state_tensor).max(1, keepdim=True)[0].detach().cpu()
+            # Double DQN: выбираем действие по q_network, оцениваем по target_network
+            next_action = self.q_network(next_state_tensor).argmax(1, keepdim=True)
+            next_q_val = self.target_network(next_state_tensor).gather(1, next_action).detach().cpu()
             td_error = torch.abs(reward + (1 - done) * self.gamma * next_q_val - q_val).item()
         
         self.td_errors.append(td_error)
@@ -105,14 +128,16 @@ class DQNAgent:
 
         states, actions, rewards, next_states, dones = zip(*batch)
 
-        states = torch.tensor(states, dtype=torch.float32).to(device)
-        actions = torch.tensor(actions).unsqueeze(1).to(device)
-        rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(device)
-        next_states = torch.tensor(next_states, dtype=torch.float32).to(device)
-        dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(device)
+        states = torch.stack(states).to(self.device)
+        actions = torch.tensor(actions).unsqueeze(1).to(self.device)
+        rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(self.device)
+        next_states = torch.stack(next_states).to(self.device)
+        dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(self.device)
 
         q_values = self.q_network(states).gather(1, actions)
-        next_q_values = self.target_network(next_states).max(1, keepdim=True)[0].detach()
+        # Double DQN: выбираем действие по q_network, оцениваем по target_network
+        next_actions = self.q_network(next_states).argmax(1, keepdim=True)
+        next_q_values = self.target_network(next_states).gather(1, next_actions).detach()
         target = rewards + (1 - dones) * self.gamma * next_q_values
 
         # loss = F.smooth_l1_loss(q_values, target)
@@ -120,11 +145,14 @@ class DQNAgent:
 
         self.optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), self.gradient_clip)
         self.optimizer.step()
 
         with torch.no_grad():
             q_values = self.q_network(states).gather(1, actions)
-            next_q_values = self.target_network(next_states).max(1, keepdim=True)[0]
+            # Double DQN: выбираем действие по q_network, оцениваем по target_network
+            next_actions = self.q_network(next_states).argmax(1, keepdim=True)
+            next_q_values = self.target_network(next_states).gather(1, next_actions)
             td_errors_new = torch.abs(rewards + (1 - dones) * self.gamma * next_q_values - q_values).squeeze().tolist()
         for i, idx in enumerate(indices):
             self.td_errors[idx] = td_errors_new[i]

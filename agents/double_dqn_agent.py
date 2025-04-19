@@ -6,13 +6,6 @@ import random
 import numpy as np
 from collections import deque
 
-class SafeBatchNorm1d(nn.BatchNorm1d):
-    def forward(self, input):
-        if self.training and input.size(0) == 1:
-            # Пропускаем нормализацию, возвращаем вход как есть
-            return input
-        return super().forward(input)
-
 class QNetwork(nn.Module):
     def __init__(self, state_dim: int, action_dim: int):
         super().__init__()
@@ -35,7 +28,7 @@ class QNetwork(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-class DQNAgent:
+class DoubleDQNAgent:
     def __init__(
         self, state_dim, action_dim, lr=1e-3, gamma=0.99,
         batch_size=64, buffer_size=100_000, epsilon_start=1.0,
@@ -72,7 +65,7 @@ class DQNAgent:
         if random.random() < self.epsilon:
             return random.randint(0, self.action_dim - 1)
         with torch.no_grad():
-            state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
+            state_tensor = state.unsqueeze(0).to(device)
             q_values = self.q_network(state_tensor)
             return int(torch.argmax(q_values).item())
 
@@ -81,12 +74,14 @@ class DQNAgent:
 
         # Рассчитываем TD-ошибку
         with torch.no_grad():
-            state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
-            next_state_tensor = torch.tensor(next_state, dtype=torch.float32).unsqueeze(0).to(device)
-            action_tensor = torch.tensor([[action]])
+            state_tensor = state.unsqueeze(0).to(device)
+            next_state_tensor = next_state.unsqueeze(0).to(device)
+            action_tensor = torch.tensor([[action]]).to(device)
 
             q_val = self.q_network(state_tensor).detach().cpu().gather(1, action_tensor)
-            next_q_val = self.target_network(next_state_tensor).max(1, keepdim=True)[0].detach().cpu()
+            # Double DQN: выбираем действие по q_network, оцениваем по target_network
+            next_action = self.q_network(next_state_tensor).argmax(1, keepdim=True)
+            next_q_val = self.target_network(next_state_tensor).gather(1, next_action).detach().cpu()
             td_error = torch.abs(reward + (1 - done) * self.gamma * next_q_val - q_val).item()
         
         self.td_errors.append(td_error)
@@ -105,14 +100,16 @@ class DQNAgent:
 
         states, actions, rewards, next_states, dones = zip(*batch)
 
-        states = torch.tensor(states, dtype=torch.float32).to(device)
+        states = torch.stack(states).to(device)
         actions = torch.tensor(actions).unsqueeze(1).to(device)
         rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(device)
-        next_states = torch.tensor(next_states, dtype=torch.float32).to(device)
+        next_states = torch.stack(next_states).to(device)
         dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(device)
 
         q_values = self.q_network(states).gather(1, actions)
-        next_q_values = self.target_network(next_states).max(1, keepdim=True)[0].detach()
+        # Double DQN: выбираем действие по q_network, оцениваем по target_network
+        next_actions = self.q_network(next_states).argmax(1, keepdim=True)
+        next_q_values = self.target_network(next_states).gather(1, next_actions).detach()
         target = rewards + (1 - dones) * self.gamma * next_q_values
 
         # loss = F.smooth_l1_loss(q_values, target)
@@ -124,7 +121,9 @@ class DQNAgent:
 
         with torch.no_grad():
             q_values = self.q_network(states).gather(1, actions)
-            next_q_values = self.target_network(next_states).max(1, keepdim=True)[0]
+            # Double DQN: выбираем действие по q_network, оцениваем по target_network
+            next_actions = self.q_network(next_states).argmax(1, keepdim=True)
+            next_q_values = self.target_network(next_states).gather(1, next_actions)
             td_errors_new = torch.abs(rewards + (1 - dones) * self.gamma * next_q_values - q_values).squeeze().tolist()
         for i, idx in enumerate(indices):
             self.td_errors[idx] = td_errors_new[i]
