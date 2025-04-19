@@ -14,38 +14,41 @@ class SafeBatchNorm1d(nn.BatchNorm1d):
         return super().forward(input)
 
 class QCNNNetwork(nn.Module):
-    def __init__(self, state_dim: int, action_dim: int, num_frames: int = 6):
+    def __init__(self, state_dim: int, action_dim: int, num_frames: int, kernel_size: int=3):
         super().__init__()
         self.num_frames = num_frames
         self.num_features = state_dim
         self.conv = nn.Sequential(
-            nn.Conv1d(in_channels=num_frames, out_channels=64, kernel_size=2, padding=0),
+            nn.Conv1d(in_channels=state_dim, out_channels=64, kernel_size=kernel_size, padding=1),
             nn.ReLU(),
-            nn.Conv1d(64, 128, kernel_size=2, padding=1),
+            nn.Conv1d(64, 128, kernel_size=kernel_size, padding=1),
             nn.ReLU(),
             nn.Flatten()
         )
         self.head = nn.Sequential(
-            nn.Linear(128 * state_dim, 256),
-            nn.LayerNorm(256),
-            nn.ReLU(),
-            nn.Linear(256, 128),
+            nn.Linear(128 * (num_frames), 128),
             nn.LayerNorm(128),
             nn.ReLU(),
-            nn.Linear(128, action_dim)
+            nn.Linear(128, 64),
+            nn.LayerNorm(64),
+            nn.ReLU(),
+            nn.Linear(64, action_dim)
         )
 
     def forward(self, x):
-        x = x.view(-1, self.num_frames, self.num_features)  # (B, n_frames, 19)
+        # X as input is (batch_size, num_frames, state_dim)
+        x = x.permute(0, 2, 1) # (B, n_features, n_frames)
         x = self.conv(x)
+        # print(f"X shape after conv: {x.shape}")
         return self.head(x)
     
 
 class DoubleDQNCNNAgent:
     def __init__(
-        self, state_dim, action_dim, num_frames, lr=1e-3, gamma=0.99,
+        self, state_dim, action_dim, num_frames, device=None, lr=7e-4, gamma=0.99,
         batch_size=64, buffer_size=100_000, epsilon_start=1.0,
-        epsilon_end=0.1, epsilon_decay=0.995, device=None
+        epsilon_end=0.1, epsilon_decay=0.995, gradient_clip=0.5,
+        kernel_size=3
     ):
         assert device in [None, "cpu", "cuda"], "device must be None, 'cpu' or 'cuda'"
         if device is None:
@@ -58,9 +61,14 @@ class DoubleDQNCNNAgent:
         self.action_dim = action_dim
         self.gamma = gamma
         self.batch_size = batch_size
+        
+        self.gradient_clip = gradient_clip
+        
+        if 2 * (kernel_size - 1) >= num_frames:
+            raise ValueError(f"kernel_size {kernel_size} is too large for num_frames {num_frames}.")
 
-        self.q_network = QCNNNetwork(state_dim, action_dim, num_frames=num_frames)
-        self.target_network = QCNNNetwork(state_dim, action_dim, num_frames=num_frames)
+        self.q_network = QCNNNetwork(state_dim, action_dim, num_frames=num_frames, kernel_size=kernel_size)
+        self.target_network = QCNNNetwork(state_dim, action_dim, num_frames=num_frames, kernel_size=kernel_size)
         self.q_network.to(self.device)
         self.target_network.to(self.device)
         self.optimizer = torch.optim.Adam(self.q_network.parameters(), lr=lr)
@@ -137,6 +145,7 @@ class DoubleDQNCNNAgent:
 
         self.optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), self.gradient_clip)
         self.optimizer.step()
 
         with torch.no_grad():

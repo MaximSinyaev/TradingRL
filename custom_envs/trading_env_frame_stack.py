@@ -24,6 +24,7 @@ class FrameStackTradingEnvV1(gym.Env):
         high = np.repeat(self.base_env.observation_space.high, stack_size, axis=0)
         self.observation_space = spaces.Box(low=low, high=high, dtype=np.float32)
         self.action_space = self.base_env.action_space
+        self.reset(seed=None, options=None)
 
     def reset(self, seed=None, options=None):
         obs, info = self.base_env.reset(seed=seed, options=options)
@@ -45,10 +46,19 @@ class FrameStackTradingEnvV1(gym.Env):
         return self._get_obs(), reward, done, truncated, info
 
     def _get_obs(self):
+        """Returns the observations for N stacked frames.
+        observations are stacked in the order of the most recent frame last.
+        For example, if stack_size = 4, the returned observation will be
+        [frame_3, frame_2, frame_1, frame_0] where frame_0 is the most recent
+        shape of the observation is (stack_size, state_dim)
+
+        Returns:
+            _type_: _description_
+        """
         if self.return_pt:
-            return torch.cat(list(self.frames), dim=0)
+            return torch.stack(list(self.frames))
         else:
-            return np.concatenate(list(self.frames), axis=0)
+            return np.stack(list(self.frames))
 
     def render(self):
         return self.base_env.render()

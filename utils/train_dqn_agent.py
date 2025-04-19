@@ -5,7 +5,21 @@ from utils.utils import transform_int_actions
 from IPython.display import clear_output
 import numpy as np
 
-def train_dqn_agent(env, agent, num_episodes=100, target_update_freq=10, t_max=10_000, render=False, base_env=None):
+def adaptive_epsilon_schedule(episode, total_episodes, epsilon_min=0.05, epsilon_max=1.0):
+    # Функция, убывающая сначала и растущая к концу
+    decay = np.exp(-5 * episode / total_episodes)
+    recovery = (episode / total_episodes) ** 3
+    if episode < total_episodes // 2:
+        return np.clip(epsilon_min + (epsilon_max - epsilon_min) * (decay + recovery), epsilon_min, epsilon_max)
+    else:
+        return np.clip(epsilon_min + (epsilon_max - epsilon_min) * (decay + recovery), epsilon_min, epsilon_max - 0.3)
+
+
+def train_dqn_agent(env, agent, 
+                    num_episodes=100, target_update_freq=10, 
+                    t_max=100_000, render=False, base_env=None,
+                    adaptive_epsilon=False, epsilon_min=0.05, epsilon_max=1.0
+                    ):
     if base_env is None:
         base_env = env
     actions_per_episode = defaultdict(list)
@@ -13,6 +27,8 @@ def train_dqn_agent(env, agent, num_episodes=100, target_update_freq=10, t_max=1
     pnl_per_episode = []
 
     for episode in tqdm.trange(num_episodes):
+        if adaptive_epsilon:
+            agent.epsilon = adaptive_epsilon_schedule(episode, num_episodes, epsilon_min=epsilon_min, epsilon_max=epsilon_max)
         state, _ = env.reset()
         total_reward = 0
         done = False

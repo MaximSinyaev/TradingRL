@@ -80,8 +80,9 @@ def validate_agent(env, agent, test_features, episodes: int = 10, t_max: int = N
             print(f"Episode {ep+1}/{episodes} — Total Reward: {total_reward:.2f}")
 
     avg_reward = np.mean(rewards)
-    print(f"\nAverage Reward over {episodes} episodes: {avg_reward:.2f}")
-    return total_reward, end_pnls, rewards, actions
+    avg_pnl = np.mean(end_pnls)
+    print(f"\nAverage Reward over {episodes} episodes: {avg_reward:.2f}, Average PNL: {avg_pnl:.2f}")
+    return end_pnls, rewards, actions
 
 def _plot_prices_and_actions(prices, actions, steps, episode_num, step_num):
     """Вспомогательная функция для построения графика."""
