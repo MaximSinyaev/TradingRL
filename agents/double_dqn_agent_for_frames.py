@@ -48,7 +48,7 @@ class DoubleDQNCNNAgent:
         self, state_dim, action_dim, num_frames, device=None, lr=7e-4, gamma=0.99,
         batch_size=64, buffer_size=100_000, epsilon_start=1.0,
         epsilon_end=0.1, epsilon_decay=0.995, gradient_clip=0.5,
-        kernel_size=3
+        kernel_size=3, store_on_device: bool=False
     ):
         assert device in [None, "cpu", "cuda"], "device must be None, 'cpu' or 'cuda'"
         if device is None:
@@ -56,6 +56,7 @@ class DoubleDQNCNNAgent:
         elif isinstance(device, str):
             device = torch.device(device)
         self.device = device
+        self.store_on_device = store_on_device
         
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -98,6 +99,10 @@ class DoubleDQNCNNAgent:
             return int(torch.argmax(q_values).item())
 
     def store(self, state, action, reward, next_state, done):
+        if self.store_on_device:
+            state = state.to(self.device)
+            next_state = next_state.to(self.device)
+        
         self.replay_buffer.append((state, action, reward, next_state, done))
 
         # Рассчитываем TD-ошибку
