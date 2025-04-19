@@ -8,7 +8,8 @@ from utils.utils import transform_int_actions
 
 candle_visualizer = CandleChartVisualizer(use_volume_width=False)
 
-def validate_agent(env, agent, test_features, episodes: int = 10, t_max: int = None, render: bool = False, verbose: bool = True, base_env=None):
+def validate_agent(env, agent, test_features, episodes: int = 10, t_max: int = None, render: bool = False, 
+                   verbose: bool = True, base_env=None, device=None):
     """
     Валидирует агента в среде, используя только Q-network без обучения.
     
@@ -40,7 +41,7 @@ def validate_agent(env, agent, test_features, episodes: int = 10, t_max: int = N
         t = 0
         while not done:
             with torch.no_grad():
-                state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+                state_tensor = torch.tensor(state, dtype=torch.float32).to(device).unsqueeze(0)
                 q_values = agent.q_network(state_tensor)
                 action = int(torch.argmax(q_values).item())
 
