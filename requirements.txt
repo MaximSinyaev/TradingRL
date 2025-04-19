@@ -1,5 +1,5 @@
 gymnasium==1.1.1
-ipython==9.1.0
+ipython
 matplotlib==3.10.1
 numpy==2.2.4
 pandas==2.2.3
