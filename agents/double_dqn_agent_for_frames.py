@@ -82,6 +82,10 @@ class DoubleDQNCNNAgent:
         self.epsilon_decay = epsilon_decay
 
         self.update_target_network()
+        
+    def reset_buffer(self):
+        self.replay_buffer.clear()
+        self.td_errors.clear()
 
     def update_target_network(self):
         self.target_network.load_state_dict(self.q_network.state_dict())
