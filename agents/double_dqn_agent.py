@@ -6,6 +6,7 @@ import numpy as np
 from collections import deque
 import gymnasium as gym
 from gymnasium import spaces
+from agents.prioritized_replay_buffer import PrioritizedReplayBuffer
 
 
 def _get_device(device=None):
@@ -49,7 +50,10 @@ class DoubleDQNAgent:
         self, state_dim, action_dim=None, multi_discrete_actions=None,
         lr=1e-3, gamma=0.99, batch_size=64, buffer_size=100_000,
         epsilon_start=1.0, epsilon_end=0.1, epsilon_decay=0.995,
-        grad_clip_norm=10.0, device=None
+        grad_clip_norm=10.0, device=None,
+        # Prioritized Replay Buffer params
+        alpha=0.6, beta_start=0.4, beta_frames=100_000,
+        use_prioritized_buffer=True,
     ):
         # Determine action dimensions
         if multi_discrete_actions is not None:
@@ -77,7 +81,17 @@ class DoubleDQNAgent:
         self.target_network.to(self.device)
         self.optimizer = torch.optim.Adam(self.q_network.parameters(), lr=lr)
 
-        self.replay_buffer = deque(maxlen=buffer_size)
+        # Replay buffer
+        self.use_prioritized_buffer = use_prioritized_buffer
+        if use_prioritized_buffer:
+            self.replay_buffer = PrioritizedReplayBuffer(
+                capacity=buffer_size,
+                alpha=alpha,
+                beta_start=beta_start,
+                beta_frames=beta_frames,
+            )
+        else:
+            self.replay_buffer = deque(maxlen=buffer_size)
 
         self.epsilon = epsilon_start
         self.epsilon_end = epsilon_end
@@ -152,49 +166,93 @@ class DoubleDQNAgent:
         # Encode action for MultiDiscrete
         action_encoded = self._encode_action(action)
 
-        # Convert numpy arrays to torch tensors for storage
-        if isinstance(state, np.ndarray):
-            state = torch.from_numpy(state).float()
-        if isinstance(next_state, np.ndarray):
-            next_state = torch.from_numpy(next_state).float()
+        if self.use_prioritized_buffer:
+            # PrioritizedReplayBuffer handles conversion internally
+            self.replay_buffer.push(state, action_encoded, reward, next_state, done)
+        else:
+            # Convert numpy arrays to torch tensors for storage
+            if isinstance(state, np.ndarray):
+                state = torch.from_numpy(state).float()
+            if isinstance(next_state, np.ndarray):
+                next_state = torch.from_numpy(next_state).float()
 
-        self.replay_buffer.append((state, action_encoded, reward, next_state, done))
+            self.replay_buffer.append((state, action_encoded, reward, next_state, done))
 
     def train_step(self):
         """Perform one training step."""
         if len(self.replay_buffer) < self.batch_size:
             return None
 
-        # Uniform random sampling
-        batch = random.sample(list(self.replay_buffer), self.batch_size)
-        states, actions, rewards, next_states, dones = zip(*batch)
+        if self.use_prioritized_buffer:
+            # Sample from PrioritizedReplayBuffer
+            states, actions, rewards, next_states, dones, indices, weights = self.replay_buffer.sample(self.batch_size)
 
-        states = torch.stack(states).to(self.device)
-        actions = torch.tensor(actions).unsqueeze(1).to(self.device)
-        rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(self.device)
-        next_states = torch.stack(next_states).to(self.device)
-        dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(self.device)
+            # Move to device
+            states = states.to(self.device)
+            actions = actions.to(self.device)
+            rewards = rewards.to(self.device)
+            next_states = next_states.to(self.device)
+            dones = dones.to(self.device)
+            weights = weights.to(self.device)
 
-        # Compute current Q values
-        q_values = self.q_network(states).gather(1, actions)
+            # Compute current Q values
+            q_values = self.q_network(states).gather(1, actions)
 
-        # Double DQN: use q_network to select actions, target_network to evaluate
-        with torch.no_grad():
-            next_actions = self.q_network(next_states).argmax(1, keepdim=True)
-            next_q_values = self.target_network(next_states).gather(1, next_actions)
-            target = rewards + (1 - dones) * self.gamma * next_q_values
+            # Double DQN: use q_network to select actions, target_network to evaluate
+            with torch.no_grad():
+                next_actions = self.q_network(next_states).argmax(1, keepdim=True)
+                next_q_values = self.target_network(next_states).gather(1, next_actions)
+                target = rewards + (1 - dones) * self.gamma * next_q_values
 
-        # Compute loss
-        loss = F.mse_loss(q_values, target)
+            # Compute TD errors for priority update
+            td_errors = torch.abs(target - q_values)
 
-        # Optimize
-        self.optimizer.zero_grad()
-        loss.backward()
+            # Compute weighted loss (importance sampling)
+            loss = (weights * F.mse_loss(q_values, target, reduction='none')).mean()
 
-        # Gradient clipping (prevents exploding gradients)
-        torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), self.grad_clip_norm)
+            # Optimize
+            self.optimizer.zero_grad()
+            loss.backward()
 
-        self.optimizer.step()
+            # Gradient clipping
+            torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), self.grad_clip_norm)
+
+            self.optimizer.step()
+
+            # Update priorities in buffer
+            self.replay_buffer.update_priorities(indices, td_errors)
+
+        else:
+            # Fallback: uniform sampling
+            batch = random.sample(list(self.replay_buffer), self.batch_size)
+            states, actions, rewards, next_states, dones = zip(*batch)
+
+            states = torch.stack(states).to(self.device)
+            actions = torch.tensor(actions).unsqueeze(1).to(self.device)
+            rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(self.device)
+            next_states = torch.stack(next_states).to(self.device)
+            dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(self.device)
+
+            # Compute current Q values
+            q_values = self.q_network(states).gather(1, actions)
+
+            # Double DQN: use q_network to select actions, target_network to evaluate
+            with torch.no_grad():
+                next_actions = self.q_network(next_states).argmax(1, keepdim=True)
+                next_q_values = self.target_network(next_states).gather(1, next_actions)
+                target = rewards + (1 - dones) * self.gamma * next_q_values
+
+            # Compute loss
+            loss = F.mse_loss(q_values, target)
+
+            # Optimize
+            self.optimizer.zero_grad()
+            loss.backward()
+
+            # Gradient clipping
+            torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), self.grad_clip_norm)
+
+            self.optimizer.step()
 
         # Soft update target network
         self.soft_update()

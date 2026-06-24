@@ -31,7 +31,8 @@ def test_pnl_buy_sell_no_commission(basic_env_no_commission):
     # Step 2: Sell at 12.0
     obs, reward, done, truncated, info = env.step(2)
     # Ожидаемая прибыль: (12 - 10) / 100 = 0.02
-    assert pytest.approx(reward, 0.0001) == 0.02 * 100
+    # В V1 награда умножается на 2, поэтому ожидаем 0.02 * 100 * 2 = 4.0
+    assert pytest.approx(reward, 0.0001) == 4.0
     assert done is False or done is True  # может быть завершено, если данных больше нет
 
     # Проверим, что PnL также посчитан верно

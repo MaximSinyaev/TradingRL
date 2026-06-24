@@ -24,6 +24,7 @@ import numpy as np
 from collections import deque
 from typing import Optional, Union, List, Tuple
 from gymnasium import spaces
+from agents.prioritized_replay_buffer import PrioritizedReplayBuffer
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -88,8 +89,13 @@ class DQNAgent:
         epsilon_start: float = 1.0,
         epsilon_end: float = 0.1,
         epsilon_decay: float = 0.995,
+        # Prioritized Replay Buffer params
+        alpha: float = 0.6,  # Priority exponent
+        beta_start: float = 0.4,  # IS weight start
+        beta_frames: int = 100_000,  # Anneal IS to 1.0
         # Customizable for faster/slower learning
         tau: float = 0.005,  # Soft update rate
+        use_prioritized_buffer: bool = True,
     ):
         # Determine action dimensions
         if multi_discrete_actions is not None:
@@ -118,8 +124,19 @@ class DQNAgent:
         self.optimizer = torch.optim.Adam(self.q_network.parameters(), lr=lr)
 
         # Replay buffer with prioritized experience sampling
-        self.replay_buffer = deque(maxlen=buffer_size)
-        self.td_errors = deque(maxlen=buffer_size)
+        self.use_prioritized_buffer = use_prioritized_buffer
+        if use_prioritized_buffer:
+            self.replay_buffer = PrioritizedReplayBuffer(
+                capacity=buffer_size,
+                alpha=alpha,
+                beta_start=beta_start,
+                beta_frames=beta_frames,
+            )
+            self.td_errors = None  # Not needed with PER
+        else:
+            # Fallback to simple deque (for compatibility)
+            self.replay_buffer = deque(maxlen=buffer_size)
+            self.td_errors = deque(maxlen=buffer_size)
 
         # Exploration
         self.epsilon = epsilon_start
@@ -230,19 +247,24 @@ class DQNAgent:
         # Encode action for storage
         action_encoded = self._encode_action(action)
 
-        self.replay_buffer.append((state, action_encoded, reward, next_state, done))
+        if self.use_prioritized_buffer:
+            # PrioritizedReplayBuffer handles priorities internally
+            self.replay_buffer.push(state, action_encoded, reward, next_state, done)
+        else:
+            # Fallback: simple deque
+            self.replay_buffer.append((state, action_encoded, reward, next_state, done))
 
-        # Calculate TD-error for prioritized sampling
-        with torch.no_grad():
-            state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
-            next_state_tensor = torch.tensor(next_state, dtype=torch.float32).unsqueeze(0).to(device)
-            action_tensor = torch.tensor([[action_encoded]])
+            # Calculate TD-error for prioritized sampling
+            with torch.no_grad():
+                state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
+                next_state_tensor = torch.tensor(next_state, dtype=torch.float32).unsqueeze(0).to(device)
+                action_tensor = torch.tensor([[action_encoded]])
 
-            q_val = self.q_network(state_tensor).detach().cpu().gather(1, action_tensor)
-            next_q_val = self.target_network(next_state_tensor).max(1, keepdim=True)[0].detach().cpu()
-            td_error = torch.abs(reward + (1 - done) * self.gamma * next_q_val - q_val).item()
+                q_val = self.q_network(state_tensor).detach().cpu().gather(1, action_tensor)
+                next_q_val = self.target_network(next_state_tensor).max(1, keepdim=True)[0].detach().cpu()
+                td_error = torch.abs(reward + (1 - done) * self.gamma * next_q_val - q_val).item()
 
-        self.td_errors.append(td_error)
+            self.td_errors.append(td_error)
 
     def train_step(self) -> Optional[float]:
         """Train Q-network on one batch.
@@ -253,41 +275,72 @@ class DQNAgent:
         if len(self.replay_buffer) < self.batch_size:
             return None
 
-        # Prioritized experience sampling
-        td_error_np = np.array(self.td_errors)
-        probs = td_error_np / td_error_np.sum()
-        indices = np.random.choice(len(self.replay_buffer), self.batch_size, p=probs)
-        batch = [self.replay_buffer[i] for i in indices]
+        if self.use_prioritized_buffer:
+            # Sample from PrioritizedReplayBuffer
+            states, actions, rewards, next_states, dones, indices, weights = self.replay_buffer.sample(self.batch_size)
 
-        states, actions, rewards, next_states, dones = zip(*batch)
+            # Move to device
+            states = states.to(device)
+            actions = actions.to(device)
+            rewards = rewards.to(device)
+            next_states = next_states.to(device)
+            dones = dones.to(device)
+            weights = weights.to(device)
 
-        states = torch.tensor(states, dtype=torch.float32).to(device)
-        actions = torch.tensor(actions).unsqueeze(1).to(device)
-        rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(device)
-        next_states = torch.tensor(next_states, dtype=torch.float32).to(device)
-        dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(device)
+            # Compute Q-values
+            q_values = self.q_network(states).gather(1, actions)
+            next_q_values = self.target_network(next_states).max(1, keepdim=True)[0].detach()
+            target = rewards + (1 - dones) * self.gamma * next_q_values
 
-        # Compute Q-values
-        q_values = self.q_network(states).gather(1, actions)
-        next_q_values = self.target_network(next_states).max(1, keepdim=True)[0].detach()
-        target = rewards + (1 - dones) * self.gamma * next_q_values
+            # Compute weighted loss (importance sampling)
+            td_errors = torch.abs(target - q_values)
+            loss = (weights * F.mse_loss(q_values, target, reduction='none')).mean()
 
-        # Compute loss
-        loss = F.mse_loss(q_values, target)
+            # Optimize
+            self.optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), 1.0)
+            self.optimizer.step()
 
-        # Optimize
-        self.optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), 1.0)  # Gradient clipping
-        self.optimizer.step()
+            # Update priorities in buffer based on new TD-errors
+            self.replay_buffer.update_priorities(indices, td_errors)
 
-        # Update TD-errors
-        with torch.no_grad():
-            q_values_new = self.q_network(states).gather(1, actions)
-            next_q_values_new = self.target_network(next_states).max(1, keepdim=True)[0]
-            td_errors_new = torch.abs(rewards + (1 - dones) * self.gamma * next_q_values_new - q_values_new).squeeze().tolist()
-        for i, idx in enumerate(indices):
-            self.td_errors[idx] = td_errors_new[i]
+        else:
+            # Fallback: naive O(N) sampling (for compatibility)
+            td_error_np = np.array(self.td_errors)
+            probs = td_error_np / td_error_np.sum()
+            indices = np.random.choice(len(self.replay_buffer), self.batch_size, p=probs)
+            batch = [self.replay_buffer[i] for i in indices]
+
+            states, actions, rewards, next_states, dones = zip(*batch)
+
+            states = torch.tensor(states, dtype=torch.float32).to(device)
+            actions = torch.tensor(actions).unsqueeze(1).to(device)
+            rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(device)
+            next_states = torch.tensor(next_states, dtype=torch.float32).to(device)
+            dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(device)
+
+            # Compute Q-values
+            q_values = self.q_network(states).gather(1, actions)
+            next_q_values = self.target_network(next_states).max(1, keepdim=True)[0].detach()
+            target = rewards + (1 - dones) * self.gamma * next_q_values
+
+            # Compute loss
+            loss = F.mse_loss(q_values, target)
+
+            # Optimize
+            self.optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), 1.0)
+            self.optimizer.step()
+
+            # Update TD-errors
+            with torch.no_grad():
+                q_values_new = self.q_network(states).gather(1, actions)
+                next_q_values_new = self.target_network(next_states).max(1, keepdim=True)[0]
+                td_errors_new = torch.abs(rewards + (1 - dones) * self.gamma * next_q_values_new - q_values_new).squeeze().tolist()
+            for i, idx in enumerate(indices):
+                self.td_errors[idx] = td_errors_new[i]
 
         # Update exploration
         self.epsilon = max(self.epsilon_end, self.epsilon * self.epsilon_decay)
