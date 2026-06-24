@@ -46,8 +46,12 @@ class CandleChartVisualizer:
             if len(actions) != len(data):
                 raise ValueError("Length of actions series must match data length")
 
-            buy_signals = data[actions == 'buy']
-            sell_signals = data[actions == 'sell']
+            # Support both simple ('buy', 'sell') and sized ('buy_50%', 'sell_100%') formats
+            buy_mask = actions.str.startswith('buy', na=False)
+            sell_mask = actions.str.startswith('sell', na=False)
+
+            buy_signals = data[buy_mask]
+            sell_signals = data[sell_mask]
 
             fig.add_trace(go.Scatter(
                 x=buy_signals['timestamp'],
