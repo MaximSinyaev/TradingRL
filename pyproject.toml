@@ -17,6 +17,14 @@ dependencies = [
     "nbformat>=4.2.0",
     "seaborn",
     "scipy>=1.10",
+    "duckdb>=1.5.4",
+    "jupyter>=1.1.1",
+    "jupyter-client>=8.9.1",
+    "hmmlearn>=0.3.3",
+    "stable-baselines3[extra]>=2.9.0",
+    "wandb>=0.28.0",
+    "tensorboard>=2.20.0",
+    "setuptools<70",
 ]
 
 [project.optional-dependencies]

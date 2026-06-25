@@ -18,8 +18,8 @@ import pandas as pd
 from typing import Any, Optional, List
 from pathlib import Path
 
-from utils.binance_loader import BinanceKlinesDownloader
-from utils.feature_generator import FeatureGenerator
+from core.data.binance_loader import BinanceKlinesDownloader
+from core.features.feature_generator import FeatureGenerator
 from agents.random_agent import RandomAgent
 
 # Environment registry

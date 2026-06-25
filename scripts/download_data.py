@@ -4,7 +4,7 @@
 import sys
 sys.path.insert(0, '.')
 
-from utils.binance_loader import MultiSymbolDataLoader
+from core.data.binance_loader import MultiSymbolDataLoader
 from datetime import datetime, timedelta
 
 # Конфигурация

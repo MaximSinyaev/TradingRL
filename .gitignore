@@ -50,7 +50,26 @@ Thumbs.db
 # Plot artifacts
 *.png
 
+# Data Caches
+data/cache/
 binance_data_cache/
+crypto_data_cache/
+data_cache/
+smart_data_cache/
+test_cache/
+
+# Training Logs
+tensorboard_logs/
+tensorboard_logs_prod/
+wandb/
+
 FinRL*/
 .pytests_cache
 .secrets.toml
+
+assistant_docs/
+
+# Local workspace models and scratch
+models/
+scratch/
+

@@ -7,8 +7,8 @@ Finds optimal configuration for Apple Silicon training.
 import time
 import numpy as np
 import torch
-from utils.binance_loader import BinanceKlinesDownloader
-from utils.feature_generator import FeatureGenerator
+from core.data.binance_loader import BinanceKlinesDownloader
+from core.features.feature_generator import FeatureGenerator
 from custom_envs.trading_env_v4 import TradingEnvV4
 from agents.double_dqn_agent import DoubleDQNAgent
 
