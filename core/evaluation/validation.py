@@ -184,12 +184,14 @@ def calculate_permutation_importance(model, vec_normalize_path, test_df, final_f
     importance_scores = {feature: [] for feature in final_features}
     
     print(f"\\nНачинаем перемешивание фичей ({n_iterations} итераций на каждую, {num_seeds} seed-прогонов внутри)...\\n")
+    rng = np.random.default_rng()
+    
     for feature in tqdm(final_features, desc="Features"):
         for i in range(n_iterations):
             shuffled_df = test_df.copy()
             
             # Перемешиваем только одну колонку
-            shuffled_df[feature] = np.random.permutation(shuffled_df[feature].values)
+            shuffled_df[feature] = rng.permutation(shuffled_df[feature].values)
             
             # Пересобираем state_vector ТОЛЬКО из нужных фичей, чтобы шейп совпадал с моделью
             feature_arrays = []

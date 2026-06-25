@@ -20,7 +20,7 @@ class TradingEnvV5(BaseTradingEnv):
 
     def __init__(
         self,
-        df: pd.DataFrame,
+        df: pd.DataFrame | list[pd.DataFrame] | dict[str, pd.DataFrame],
         initial_deposit: float = 100_000.0,
         commission: float = 0.0005,
         leverage: float = 1.0,
@@ -29,13 +29,21 @@ class TradingEnvV5(BaseTradingEnv):
         downside_penalty: float = 3.0,   # Sortino proxy: penalize losses 3x more
         max_drawdown_pct: float = 0.10,  # 10% max DD -> termination
         continuous_action: bool = True,  # True for PPO/SAC, False for DQN
-        t_max: int = 1440,
+        t_max: Optional[int] = 1440,
         invalid_action_penalty: float = -0.00005,
         domain_randomization: bool = True,
     ):
         super().__init__(initial_deposit=initial_deposit, commission=commission, leverage=leverage)
         
-        self.df = df.reset_index(drop=True)
+        # Поддержка Multi-Asset: один df или список/словарь
+        if isinstance(df, pd.DataFrame):
+            self.dfs = [df.reset_index(drop=True)]
+        elif isinstance(df, dict):
+            self.dfs = [d.reset_index(drop=True) for d in df.values()]
+        else:
+            self.dfs = [d.reset_index(drop=True) for d in df]
+            
+        self.df = self.dfs[0]
         self.continuous_action = continuous_action
         self.domain_randomization = domain_randomization
         
@@ -52,7 +60,8 @@ class TradingEnvV5(BaseTradingEnv):
         self.volatility_factor = volatility_factor
         self.downside_penalty = downside_penalty
         self.max_drawdown_pct = max_drawdown_pct
-        self.t_max = t_max
+        self.user_t_max = t_max
+        self.t_max = t_max if t_max is not None else len(self.df) - 1
         self.invalid_action_penalty = invalid_action_penalty
         
         self.orig_base_slippage = base_slippage
@@ -82,6 +91,12 @@ class TradingEnvV5(BaseTradingEnv):
         if seed is not None:
             np.random.seed(seed)
             
+        # Случайный выбор монеты для мульти-ассет обучения
+        if len(self.dfs) > 1:
+            idx = np.random.randint(0, len(self.dfs))
+            self.df = self.dfs[idx]
+            self.features = np.stack(self.df['state_vector'].values).astype(np.float32)
+            
         if self.domain_randomization:
             self.commission = np.random.uniform(0.0003, 0.001)
             self.base_slippage = np.random.uniform(0.00005, 0.0003)
@@ -91,11 +106,17 @@ class TradingEnvV5(BaseTradingEnv):
             self.base_slippage = self.orig_base_slippage
             self.downside_penalty = self.orig_downside_penalty
 
-        if len(self.features) <= self.t_max:
+        current_max_len = len(self.features)
+        
+        # Если юзер не задал t_max жестко, берем весь размер df
+        t_max_for_episode = self.user_t_max if self.user_t_max is not None else current_max_len - 1
+        
+        if current_max_len <= t_max_for_episode:
             self.start_index = 0
-            self.t_max = len(self.features) - 1
+            self.t_max = current_max_len - 1
         else:
-            self.start_index = np.random.randint(0, len(self.features) - self.t_max)
+            self.start_index = np.random.randint(0, current_max_len - t_max_for_episode)
+            self.t_max = t_max_for_episode
 
         self.current_step = self.start_index
         self._reset_portfolio()

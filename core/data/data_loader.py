@@ -162,3 +162,47 @@ def load_crypto_data(
 
         print(f"✅ Loaded {len(result)} records")
         return result
+
+
+def load_multi_crypto_data(
+    symbols: list[str] = ["BTCUSDT", "ETHUSDT"],
+    start_date: str = "2020-01-01",
+    end_date: Optional[str] = None,
+    interval: str = "4h",
+    source: str = "bybit_futures",
+    cache_dir: str = "data/cache",
+    use_cache: bool = True
+) -> dict[str, pd.DataFrame]:
+    """Load data for multiple crypto symbols.
+    
+    Args:
+        symbols: List of trading pairs (e.g., ["BTCUSDT", "ETHUSDT"])
+        start_date: Start date "YYYY-MM-DD"
+        end_date: End date "YYYY-MM-DD" (default: now)
+        interval: Candle interval ("1h", "4h", "1d", etc.)
+        source: Data source ("bybit_futures" or "binance_futures")
+        cache_dir: Cache directory
+        use_cache: Use cached data (default: True)
+        
+    Returns:
+        Dictionary mapping symbols to DataFrames
+    """
+    results = {}
+    for sym in symbols:
+        print(f"\n{'='*40}")
+        print(f"🔄 Processing {sym}...")
+        print(f"{'='*40}")
+        
+        df = load_crypto_data(
+            symbol=sym,
+            start_date=start_date,
+            end_date=end_date,
+            interval=interval,
+            source=source,
+            cache_dir=cache_dir,
+            use_cache=use_cache
+        )
+        if not df.empty:
+            results[sym] = df
+            
+    return results

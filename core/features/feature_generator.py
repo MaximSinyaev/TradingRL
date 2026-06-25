@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from itertools import combinations
 import math
+from typing import Optional
 
 import joblib
 from pathlib import Path
@@ -18,7 +19,8 @@ class FeatureGenerator:
                  macd_slow: int = 26,
                  macd_signal: int = 9,
                  use_ema_diffs: bool = True,
-                 d_frac: float = 0.5): # Параметр для фракционного дифференцирования
+                 d_frac: float = 0.5,
+                 hmm_path: Optional[str] = "default"):
         self.price_col = price_col
         self.volume_col = volume_col
         self.ema_span = ema_span
@@ -34,17 +36,21 @@ class FeatureGenerator:
         self.hmm_model = None
         self.hmm_scaler = None
         
-        # Попытка загрузить HMM
-        models_dir = Path(__file__).parent.parent / "models"
-        hmm_path = models_dir / "hmm_model.pkl"
-        if hmm_path.exists():
+        if hmm_path == "default":
+            hmm_path = str(Path(__file__).parent.parent.parent / "models" / "hmm_model.pkl")
+            
+        if hmm_path is not None:
+            hmm_file = Path(hmm_path)
+            if not hmm_file.exists():
+                raise FileNotFoundError(f"❌ HMM model file not found at {hmm_file}. "
+                                        f"Please check the path or set hmm_path=None if the model does not use HMM.")
             try:
-                data = joblib.load(hmm_path)
+                data = joblib.load(hmm_file)
                 self.hmm_model = data["model"]
                 self.hmm_scaler = data["scaler"]
-                print(f"✅ HMM Model loaded from {hmm_path}")
+                print(f"✅ HMM Model loaded from {hmm_file}")
             except Exception as e:
-                print(f"⚠️ Could not load HMM model: {e}")
+                raise RuntimeError(f"❌ Failed to load HMM model from {hmm_file}. Error: {e}")
 
     def compute_ema(self, series: pd.Series, span: int) -> pd.Series:
         return series.ewm(span=span, adjust=False).mean()

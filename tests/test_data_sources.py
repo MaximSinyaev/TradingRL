@@ -1,3 +1,5 @@
+from core.data.binance_source import BinanceFuturesSource
+from core.data.bybit_source import BybitFuturesSource
 """
 Tests for data sources abstraction.
 
@@ -11,14 +13,7 @@ Tests:
 import pytest
 import pandas as pd
 from datetime import datetime, timezone, timedelta
-from core.data.data_sources import (
-    DataSourceFactory,
-    BinanceFuturesSource,
-    BybitFuturesSource,
-    BINANCE_FUTURES,
-    BYBIT_FUTURES,
-)
-
+from core.data.data_sources import DataSourceConfig, DataSourceFactory
 
 class TestDataSourceFactory:
     """Test factory pattern."""
@@ -43,7 +38,7 @@ class TestDataSourceFactory:
 
     def test_invalid_source(self):
         """Test invalid source raises error."""
-        with pytest.raises(ValueError, match="Unknown source type"):
+        with pytest.raises(ValueError, match="Unknown data source"):
             DataSourceFactory.create("invalid_exchange", "BTCUSDT")
 
     def test_symbol_normalization(self):
