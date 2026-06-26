@@ -52,14 +52,14 @@ def run_validation(data_features, model_path, norm_path, use_frame_stack=True, n
         action, _ = model.predict(obs, deterministic=True)
         obs, _, done, info = vec_env.step(action)
         
-        act_val = action[0][0] if isinstance(action, np.ndarray) else action
-        size_str = f"{abs(act_val)*100:.0f}%"
-        
         executed = info[0].get("executed", False)
+        trade_fraction = info[0].get("trade_size_fraction", 0.0)
         
-        if act_val > 0.05 and executed:
+        if executed and trade_fraction > 0.01:
+            size_str = f"{abs(trade_fraction)*100:.0f}%"
             actions_list.append(f'buy_{size_str}')
-        elif act_val < -0.05 and executed:
+        elif executed and trade_fraction < -0.01:
+            size_str = f"{abs(trade_fraction)*100:.0f}%"
             actions_list.append(f'sell_{size_str}')
         else:
             actions_list.append('hold')

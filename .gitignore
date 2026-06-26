@@ -74,3 +74,8 @@ assistant_docs/
 models/
 scratch/
 
+.claude/
+.agents/BLACKBOARD.md
+
+*.gz
+*.db

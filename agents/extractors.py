@@ -123,13 +123,11 @@ class GatedGruExtractor(BaseFeaturesExtractor):
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model: int, max_len: int = 5000):
         super().__init__()
-        import math
-        position = torch.arange(max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
-        pe = torch.zeros(max_len, 1, d_model)
-        pe[:, 0, 0::2] = torch.sin(position * div_term)
-        pe[:, 0, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe)
+        # For RL with short sequences (n_stack=10), learnable PE is much more stable 
+        # and doesn't overwhelm the initial linear projection.
+        self.pe = nn.Parameter(torch.zeros(max_len, 1, d_model))
+        # Initialize with small values
+        nn.init.uniform_(self.pe, -0.02, 0.02)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x shape: (seq_len, batch_size, d_model)
@@ -157,16 +155,16 @@ class GatedTransformerExtractor(BaseFeaturesExtractor):
             d_model=d_model, 
             nhead=n_heads, 
             dim_feedforward=d_model * 4, 
-            dropout=0.3, 
+            dropout=0.0, # NO dropout in RL blocks to stabilize value targets
             activation="gelu",
-            batch_first=False # PyTorch Transformer expects (Seq, Batch, Feature) by default if batch_first=False
+            batch_first=False 
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
         
         self.output_proj = nn.Sequential(
             nn.Linear(d_model, features_dim),
-            nn.ReLU(),
-            nn.Dropout(0.3)
+            nn.ReLU()
+            # Removed dropout here as well
         )
         
         self.gate_net = nn.Sequential(
