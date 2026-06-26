@@ -183,23 +183,27 @@ class FeatureGenerator:
         # Нормализуем z-score для frac_diff, так как масштаб может быть разный
         df['frac_diff_norm'] = (df['frac_diff'] - df['frac_diff'].rolling(self.ema_span).mean()) / (df['frac_diff'].rolling(self.ema_span).std() + 1e-9)
 
+        # Мульти-таймфрейм фичи
+        df['sma_6'] = self.compute_ema(price, 6)
+        df['daily_trend'] = df[self.price_col] / (df['sma_6'] + 1e-9)
+        df['weekly_momentum'] = (df[self.price_col] / df[self.price_col].shift(42)) - 1.0
+
         # 7. Фичи фьючерсов (Funding Rate, Open Interest)
         if 'fundingRate' in df.columns:
             df['funding_rate'] = df['fundingRate']
-            # Дельта фандинга: растет или падает
             df['funding_delta'] = df['fundingRate'].diff()
         else:
             df['funding_rate'] = 0.0
             df['funding_delta'] = 0.0
 
         if 'sumOpenInterest' in df.columns:
-            # Относительное изменение Open Interest (pct_change)
             df['oi_delta'] = df['sumOpenInterest'].pct_change(fill_method=None)
         else:
             df['oi_delta'] = 0.0
 
+        df['fr_x_oi'] = df['funding_rate'] * df['oi_delta']
+
         # Заполняем возможные NaN перед формированием вектора
-        # Устанавливаем опцию, чтобы избежать FutureWarning
         pd.set_option('future.no_silent_downcasting', True)
         df = df.ffill()
         df = df.bfill()
@@ -229,7 +233,8 @@ class FeatureGenerator:
             'log_return', 'rsi_norm', 'normalized_volume',
             'macd_line_norm', 'macd_signal_norm', 'macd_hist_norm',
             'gk_volatility', 'frac_diff_norm',
-            'funding_rate', 'funding_delta', 'oi_delta'
+            'funding_rate', 'funding_delta', 'oi_delta',
+            'daily_trend', 'weekly_momentum', 'fr_x_oi'
         ]
         
         # Защита: проверяем, что все нужные колонки есть
@@ -245,7 +250,8 @@ class FeatureGenerator:
         df['state_vector'] = df[final_features].values.tolist()
 
         # 9. Убираем строки, где не успели стабилизироваться EMA и окно frac_diff
-        cutoff = max(self.ema_span, 100) # 100 это глубина весов frac_diff
+        max_lookback = 42 # for weekly_momentum
+        cutoff = max(self.ema_span, 100, max_lookback) # 100 это глубина весов frac_diff
         df = df.iloc[cutoff:].reset_index(drop=True)
 
         return df

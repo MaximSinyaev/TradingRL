@@ -249,6 +249,9 @@ class SmartCacheLoader:
             print(f"❌ Error downloading klines: {e}")
             result_df = pd.DataFrame()
 
+        if result_df.empty:
+            return pd.DataFrame()
+
         # Fetch funding rates
         if fetch_funding and primary_src.has_funding_data():
             print(f"    📊 Downloading funding rates...")
