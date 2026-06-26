@@ -120,6 +120,8 @@ class OOSEvalCallback(BaseCallback):
 
         # Store asset names for logging
         self.asset_names = list(val_dfs.keys())
+        self.total_assets = len(self.asset_names)
+        self.asset_to_idx = {name: idx for idx, name in enumerate(self.asset_names)}
 
         # Environment params for creating validation environments
         self.env_params = {
@@ -172,6 +174,8 @@ class OOSEvalCallback(BaseCallback):
                     df=df_slice,
                     domain_randomization=False,  # Deterministic validation
                     t_max=None,  # Use full slice
+                    total_assets=self.total_assets,
+                    fixed_asset_idx=self.asset_to_idx[asset_name],
                     **self.env_params
                 )
                 self.val_envs[(asset_name, slice_name)] = env

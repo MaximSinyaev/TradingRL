@@ -32,6 +32,8 @@ class TradingEnvV5(BaseTradingEnv):
         t_max: Optional[int] = 1440,
         invalid_action_penalty: float = -0.00005,
         domain_randomization: bool = True,
+        total_assets: Optional[int] = None,
+        fixed_asset_idx: Optional[int] = None,
     ):
         super().__init__(initial_deposit=initial_deposit, commission=commission, leverage=leverage)
         
@@ -78,13 +80,16 @@ class TradingEnvV5(BaseTradingEnv):
             # DQN: Discrete actions [Hold/Buy/Sell, Size Level]
             self.action_space = spaces.MultiDiscrete([3, 10])
 
-        obs_dim = self.num_features + 10
+        self.num_assets = total_assets if total_assets is not None else len(self.dfs)
+        obs_dim = self.num_features + 10 + self.num_assets
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32
         )
 
+        self.fixed_asset_idx = fixed_asset_idx
         self.current_step = 0
         self.start_index = 0
+        self.current_asset_idx = fixed_asset_idx if fixed_asset_idx is not None else 0
         self.reset()
 
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
@@ -93,10 +98,16 @@ class TradingEnvV5(BaseTradingEnv):
             np.random.seed(seed)
             
         # Случайный выбор монеты для мульти-ассет обучения
-        if len(self.dfs) > 1:
-            idx = np.random.randint(0, len(self.dfs))
-            self.df = self.dfs[idx]
+        if self.fixed_asset_idx is not None:
+            self.current_asset_idx = self.fixed_asset_idx
+            self.df = self.dfs[0]
             self.features = np.stack(self.df['state_vector'].values).astype(np.float32)
+        elif len(self.dfs) > 1:
+            self.current_asset_idx = np.random.randint(0, len(self.dfs))
+            self.df = self.dfs[self.current_asset_idx]
+            self.features = np.stack(self.df['state_vector'].values).astype(np.float32)
+        else:
+            self.current_asset_idx = 0
             
         if self.domain_randomization:
             self.commission = np.random.uniform(0.0003, 0.001)
@@ -295,6 +306,9 @@ class TradingEnvV5(BaseTradingEnv):
 
         unrealized_pnl = self._unrealized_pnl_total(price)
         can_trade = float(self._can_trade())
+        
+        asset_ohe = np.zeros(self.num_assets, dtype=np.float32)
+        asset_ohe[self.current_asset_idx] = 1.0
 
         return np.concatenate([
             features,
@@ -309,7 +323,8 @@ class TradingEnvV5(BaseTradingEnv):
                 self.leverage - 1.0,
                 0.0,
                 0.0,
-            ]
+            ],
+            asset_ohe
         ]).astype(np.float32)
 
 if __name__ == "__main__":

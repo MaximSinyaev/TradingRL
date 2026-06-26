@@ -29,6 +29,8 @@ class TradingEnvV6(TradingEnvV5):
         t_max: Optional[int] = 1440,
         domain_randomization: bool = True,
         weight_tolerance: float = 0.05, # 5% deadband
+        total_assets: Optional[int] = None,
+        fixed_asset_idx: Optional[int] = None,
     ):
         # We pass continuous_action=True by definition for V6
         super().__init__(
@@ -43,6 +45,8 @@ class TradingEnvV6(TradingEnvV5):
             continuous_action=True,
             t_max=t_max,
             domain_randomization=domain_randomization,
+            total_assets=total_assets,
+            fixed_asset_idx=fixed_asset_idx,
             invalid_action_penalty=0.0 # Unused in V6, but set to 0 just in case
         )
         
