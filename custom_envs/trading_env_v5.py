@@ -69,6 +69,7 @@ class TradingEnvV5(BaseTradingEnv):
         self.orig_downside_penalty = downside_penalty
 
         self.num_features = self.features.shape[1]
+        self.portfolio_history = []  # Track portfolio value for Sortino calculation
         
         if self.continuous_action:
             # PPO/SAC: Action is a single float [-1.0, 1.0] representing target position
@@ -120,9 +121,10 @@ class TradingEnvV5(BaseTradingEnv):
 
         self.current_step = self.start_index
         self._reset_portfolio()
-        
+
         self.prev_portfolio_value = self.initial_deposit
         self.max_portfolio_value = self.initial_deposit
+        self.portfolio_history = []  # Reset portfolio history for new episode
 
         return self._get_observation(), {}
 
@@ -194,7 +196,10 @@ class TradingEnvV5(BaseTradingEnv):
         # 4. Calculate Portfolio Value & Drawdown
         new_mid_price = self._get_current_price() if self.current_step < len(self.df) else mid_price
         current_portfolio_value = self.get_portfolio_value(new_mid_price)
-        
+
+        # Track portfolio value for Sortino calculation
+        self.portfolio_history.append(current_portfolio_value)
+
         self.max_portfolio_value = max(self.max_portfolio_value, current_portfolio_value)
         drawdown = (current_portfolio_value - self.max_portfolio_value) / self.max_portfolio_value
         
@@ -229,6 +234,9 @@ class TradingEnvV5(BaseTradingEnv):
             
         if done:
             self._finalize_pnl()
+            episode_sortino = self._calculate_sortino_from_history()
+        else:
+            episode_sortino = 0.0
 
         info = {
             "pnl": (current_portfolio_value - self.initial_deposit) / self.initial_deposit * 100,
@@ -238,7 +246,8 @@ class TradingEnvV5(BaseTradingEnv):
             "executed": executed,
             "margin_call": margin_call,
             "drawdown": drawdown * 100,
-            "real_reward": reward
+            "real_reward": reward,
+            "episode_sortino": episode_sortino
         }
 
         return self._get_observation(), reward, done, False, info
@@ -249,6 +258,27 @@ class TradingEnvV5(BaseTradingEnv):
             self._close_long(sum(v for _, v in self.positions_long), price)
         if self.positions_short:
             self._close_short(sum(v for _, v in self.positions_short), price)
+
+    def _calculate_sortino_from_history(self) -> float:
+        """Calculate Sortino Ratio from portfolio history.
+
+        Sortino = mean_return / downside_std
+        where downside_std is std of returns that are < 0.
+        """
+        if len(self.portfolio_history) < 2:
+            return 0.0
+
+        returns = pd.Series(self.portfolio_history).pct_change().dropna()
+
+        if len(returns) == 0:
+            return 0.0
+
+        mean_return = returns.mean()
+        downside_returns = returns[returns < 0]
+        downside_std = downside_returns.std() if len(downside_returns) > 1 else 1e-6
+
+        sortino = mean_return / downside_std if downside_std > 1e-6 else 0.0
+        return sortino
 
     def _get_observation(self) -> np.ndarray:
         features = self.features[self.current_step]
