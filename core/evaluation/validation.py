@@ -54,9 +54,12 @@ def run_validation(data_features, model_path, norm_path, use_frame_stack=True, n
         
         act_val = action[0][0] if isinstance(action, np.ndarray) else action
         size_str = f"{abs(act_val)*100:.0f}%"
-        if act_val > 0.05:
+        
+        executed = info[0].get("executed", False)
+        
+        if act_val > 0.05 and executed:
             actions_list.append(f'buy_{size_str}')
-        elif act_val < -0.05:
+        elif act_val < -0.05 and executed:
             actions_list.append(f'sell_{size_str}')
         else:
             actions_list.append('hold')

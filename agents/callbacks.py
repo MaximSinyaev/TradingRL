@@ -26,9 +26,6 @@ class TradingMetricsCallback(BaseCallback):
             
             self.logger.record("env/mean_pnl", mean_pnl)
             self.logger.record("env/mean_real_reward", mean_reward)
-            
-            if wandb.run is not None:
-                wandb.log({"env/mean_pnl": mean_pnl, "env/mean_real_reward": mean_reward}, commit=False)
                 
             self.pnls = []
             self.rewards = []

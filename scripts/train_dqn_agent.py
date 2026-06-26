@@ -7,7 +7,7 @@ Supports:
 
 Usage:
     from agents.dqn_agent import DQNAgent
-    from utils.train_dqn_agent import train_dqn_agent
+    from scripts.train_dqn_agent import train_dqn_agent
 
     # Auto-detect from env
     agent = DQNAgent.from_env(env, lr=5e-4)
