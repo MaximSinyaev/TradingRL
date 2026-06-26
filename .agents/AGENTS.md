@@ -1,63 +1,67 @@
-# Правила Workspace: Trading RL
+# Workspace Rules: Trading RL
 
-## Управление Экспериментами (Experiment Management)
-В этом репозитории все обученные модели, нормализаторы и логи строго структурированы по экспериментам. Это обязательное правило для всех новых скриптов и ноутбуков обучения.
+## Language Policy
+- **Code, Comments, and Documentation:** All code comments, docstrings, and entries in `.agents/SYNC_LOG.md` MUST be written in English. This ensures token efficiency and aligns with standard software engineering practices.
+- **Communication:** Communication with the user in the chat MUST be in Russian.
 
-### 1. Структура хранения
-Все артефакты обучения должны сохраняться в директорию `models/experiments/<exp_name>/`.
-Внутри этой папки должны находиться:
-- `model.zip` (сама модель)
-- `vec_normalize.pkl` (состояние среды/нормализатора)
+## Experiment Management
+In this repository, all trained models, normalizers, and logs are strictly structured by experiments. This is a mandatory rule for all new training scripts and notebooks.
 
-Tensorboard логи сохраняются в `tensorboard_logs/<exp_name>/`.
+### 1. Storage Structure
+All training artifacts must be saved in the `models/experiments/<exp_name>/` directory.
+Inside this folder, there should be:
+- `model.zip` (the model itself)
+- `vec_normalize.pkl` (environment/normalizer state)
 
-### 2. Использование `experiment_manager`
-Всегда используйте `utils.experiment_manager` для настройки путей перед началом обучения:
+Tensorboard logs are saved in `tensorboard_logs/<exp_name>/`.
+
+### 2. Using `experiment_manager`
+Always use `core.experiment_manager` to set up paths before training starts:
 ```python
-from utils.experiment_manager import get_experiment_paths
+from core.experiment_manager import get_experiment_paths
 
 exp_name = "my_experiment_name"
 model_path, norm_path, tb_log_dir = get_experiment_paths(exp_name)
 
-# Передача tb_log_dir в агента (TensorBoard подключается дефолтно)
+# Pass tb_log_dir to the agent (TensorBoard is connected by default)
 model = create_ppo_agent(..., tensorboard_log=tb_log_dir)
 
-# Обучение...
+# Training...
 
-# Сохранение по правильным путям
+# Saving using the correct paths
 model.save(model_path)
 vec_env.save(norm_path)
 ```
 
-### 3. Трекинг (W&B и TensorBoard)
-- **W&B (Weights & Biases)**: Должен быть подключен **ко всем** тренировочным прогонам для логирования метрик и гиперпараметров.
-- **TensorBoard**: Подключается по умолчанию ко всем агентам (через `tensorboard_log` в конструкторе SB3).
-- **Запуск TensorBoard**: **ЗАПРЕЩЕНО** запускать TensorBoard внутри ячеек Jupyter Notebook (через `%tensorboard` или `!tensorboard`). TensorBoard всегда запускается как отдельный процесс в терминале.
+### 3. Tracking (W&B and TensorBoard)
+- **W&B (Weights & Biases)**: Must be connected **to all** training runs to log metrics and hyperparameters.
+- **TensorBoard**: Connected by default to all agents (via `tensorboard_log` in the SB3 constructor).
+- **Running TensorBoard**: It is **FORBIDDEN** to run TensorBoard inside Jupyter Notebook cells (via `%tensorboard` or `!tensorboard`). TensorBoard is always run as a separate process in the terminal.
 
-## Синхронизация и Управление Состоянием (State Management)
-Над проектом могут параллельно работать несколько ИИ-агентов. Чтобы не сломать код друг друга, используйте файл `assistant_docs/changelog.md`.
-- **Всегда читайте `changelog.md`** в начале сессии или перед модификацией ключевых компонентов (`data_loader`, `feature_generator`, `trading_env`).
-- **Всегда пишите в `changelog.md`** после того, как завершили логический блок кода или выполнили ресёрч.
-- Если вы изменили формат выходных данных (например, добавили новую колонку в DataFrame), **обязательно** укажите это в ченджлоге в блоке *"Внимание для других ассистентов"*.
+## Synchronization and State Management
+Multiple AI assistants may be working on the project simultaneously. To avoid breaking each other's code, use the `.agents/SYNC_LOG.md` file.
+- **Always read `.agents/SYNC_LOG.md`** at the beginning of a session or before modifying key components (`data_loader`, `feature_generator`, `trading_env`).
+- **Always write to `.agents/SYNC_LOG.md`** after completing a logical block of code or research.
+- If you change the output data format (e.g., added a new column to a DataFrame), you **must** indicate this in the sync log under the *"Attention for other assistants"* section.
 
-## Архитектура и Разделение Ответственности
-Проект имеет строгую модульную структуру. Смешивание логики запрещено!
-- `core/data/data_loader.py` и связанные файлы: Только скачивание данных и кэширование. Никакой математики фичей.
-- `core/features/feature_generator.py`: Только математика индикаторов, нормализация и формирование `state_vector`.
-- `custom_envs/`: Среды Gymnasium (взаимодействие со средой, расчет комиссии, проскальзывание, награда).
-- `agents/`: Только логика нейросетей, реплей-буферов, экстракторов и алгоритмов (DQN, PPO).
+## Architecture and Separation of Concerns
+The project has a strict modular structure. Mixing logic is forbidden!
+- `core/data/data_loader.py` and related files: Only downloading data and caching. No feature math.
+- `core/features/feature_generator.py`: Only indicator math, normalization, and forming the `state_vector`.
+- `custom_envs/`: Gymnasium environments (interaction with the environment, commission calculation, slippage, reward).
+- `agents/`: Only neural network logic, replay buffers, extractors, and algorithms (DQN, PPO).
 
-## Специфика Trading RL (Наш Edge)
-Мы строим систему, нацеленную на реальный рынок:
-- **Инструмент**: Бессрочные Фьючерсы (Perpetuals). Учитывайте возможность шорта и механику Funding Rate.
-- **Таймфрейм**: Основной таймфрейм — 4h (для устранения микроструктурного шума).
-- **Среда (Environment) > Алгоритм**: Среда должна быть максимально суровой (комиссии, динамическое проскальзывание в зависимости от волатильности, риск-менеджмент).
-- **Награда (Reward Function)**: НЕ используем обычный PnL. Награда должна корректироваться на риск (Sortino Ratio, штрафы за просадку).
+## Trading RL Specifics (Our Edge)
+We are building a system aimed at the real market:
+- **Instrument**: Perpetual Futures. Take into account the possibility of shorting and Funding Rate mechanics.
+- **Timeframe**: The main timeframe is 4h (to eliminate microstructural noise).
+- **Environment > Algorithm**: The environment must be as harsh as possible (commissions, dynamic slippage depending on volatility, risk management).
+- **Reward Function**: DO NOT use simple PnL. The reward must be risk-adjusted (Sortino Ratio, penalties for drawdown).
 
-## Управление Зависимостями (uv)
-Для работы с окружением и зависимостями используется **uv** (а не pip или conda).
-- **Установка пакетов**: Используйте `uv add <package>` или `uv pip install <package>`.
-- **Запуск скриптов**: Запускайте через `uv run python script.py` (или Jupyter Notebook).
+## Dependency Management (uv)
+**uv** is used for managing the environment and dependencies (not pip or conda).
+- **Installing packages**: Use `uv add <package>` or `uv pip install <package>`.
+- **Running scripts**: Run via `uv run python script.py` (or Jupyter Notebook).
 
-## Дорожная Карта (Roadmap)
-Прежде чем предлагать масштабные архитектурные изменения, сверяйтесь с `assistant_docs/roadmap.md`. Это утвержденный план развития проекта.
+## Roadmap
+Before proposing large-scale architectural changes, consult `assistant_docs/roadmap.md`. This is the approved project development plan.
