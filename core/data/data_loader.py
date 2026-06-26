@@ -19,6 +19,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from core.data.data_sources import DataSourceFactory, BINANCE_FUTURES, BYBIT_FUTURES
 from core.data.multi_source_loader import SmartCacheLoader
 
+import os
+from pathlib import Path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+DEFAULT_CACHE_DIR = str(PROJECT_ROOT / "data" / "cache")
+
+
 
 def load_crypto_data(
     symbol: str = "BTCUSDT",
@@ -26,7 +32,7 @@ def load_crypto_data(
     end_date: Optional[str] = None,
     interval: str = "4h",
     source: str = "bybit_futures",
-    cache_dir: str = "data/cache",
+    cache_dir: str = DEFAULT_CACHE_DIR,
     use_cache: bool = True
 ) -> pd.DataFrame:
     """Load complete crypto data in one line with incremental caching.
@@ -170,7 +176,7 @@ def load_multi_crypto_data(
     end_date: Optional[str] = None,
     interval: str = "4h",
     source: str = "bybit_futures",
-    cache_dir: str = "data/cache",
+    cache_dir: str = DEFAULT_CACHE_DIR,
     use_cache: bool = True
 ) -> dict[str, pd.DataFrame]:
     """Load data for multiple crypto symbols.

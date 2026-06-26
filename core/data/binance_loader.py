@@ -7,6 +7,12 @@ from typing import Optional
 from tqdm import tqdm
 from dataclasses import dataclass
 
+import os
+from pathlib import Path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+DEFAULT_CACHE_DIR = str(PROJECT_ROOT / "data" / "cache")
+
+
 @dataclass
 class MarketSource:
     name: str
@@ -38,7 +44,7 @@ class BinanceKlinesDownloader:
     - Загрузку Funding Rate и Open Interest (для фьючерсов)
     """
 
-    def __init__(self, symbol: str = "BTCUSDT", market: MarketSource = FUTURES_MARKET, cache_dir: str = "data/cache"):
+    def __init__(self, symbol: str = "BTCUSDT", market: MarketSource = FUTURES_MARKET, cache_dir: str = DEFAULT_CACHE_DIR):
         self.symbol = symbol.upper()
         self.limit = 1000  # Binance max limit per request (for klines/funding)
         self.oi_limit = 500 # max limit for OI
@@ -302,7 +308,7 @@ class BinanceKlinesDownloader:
 class MultiSymbolDataLoader:
     """Загрузчик для нескольких символов одновременно."""
 
-    def __init__(self, symbols: list[str], market: MarketSource = FUTURES_MARKET, cache_dir: str = "data/cache"):
+    def __init__(self, symbols: list[str], market: MarketSource = FUTURES_MARKET, cache_dir: str = DEFAULT_CACHE_DIR):
         self.symbols = [s.upper() for s in symbols]
         self.market = market
         self.downloaders = {

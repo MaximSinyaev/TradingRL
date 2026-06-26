@@ -13,6 +13,12 @@ import hashlib
 import json
 import time
 
+import os
+from pathlib import Path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+DEFAULT_CACHE_DIR = str(PROJECT_ROOT / "data" / "cache")
+
+
 
 class CachedDataSource:
     """Wrapper that adds caching to any DataSource.
@@ -28,12 +34,12 @@ class CachedDataSource:
 
     Usage:
         src = BinanceFuturesSource("BTCUSDT")
-        cached_src = CachedDataSource(src, cache_dir="data/cache")
+        cached_src = CachedDataSource(src, cache_dir=DEFAULT_CACHE_DIR)
         # Now all calls are cached
         df = cached_src.get_klines(interval="4h", ...)
     """
 
-    def __init__(self, source, cache_dir: str = "data/cache"):
+    def __init__(self, source, cache_dir: str = DEFAULT_CACHE_DIR):
         """Wrap a DataSource with caching.
 
         Args:

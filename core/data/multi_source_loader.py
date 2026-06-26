@@ -17,6 +17,12 @@ import duckdb
 
 from core.data.data_sources import DataSource, DataSourceFactory, BINANCE_FUTURES, BYBIT_FUTURES
 
+import os
+from pathlib import Path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+DEFAULT_CACHE_DIR = str(PROJECT_ROOT / "data" / "cache")
+
+
 
 class SmartCacheLoader:
     """Loader with smart caching and incremental updates.
@@ -33,7 +39,7 @@ class SmartCacheLoader:
 
     def __init__(
         self,
-        cache_dir: str = "data/cache",
+        cache_dir: str = DEFAULT_CACHE_DIR,
         primary_source: str = BINANCE_FUTURES,
         oi_source: Optional[str] = None,  # Alternative source for OI data
     ):
@@ -431,7 +437,7 @@ class MultiSourceDataLoader:
         symbols: list[str],
         primary_source: str = BINANCE_FUTURES,
         oi_source: Optional[str] = None,
-        cache_dir: str = "data/cache"
+        cache_dir: str = DEFAULT_CACHE_DIR
     ):
         self.symbols = [s.upper() for s in symbols]
         self.loader = SmartCacheLoader(
