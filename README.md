@@ -22,7 +22,7 @@ uv run python scripts/train_hmm.py
 ### 2. Оптимизация Гиперпараметров (HPO)
 Перед финальным обучением **настоятельно рекомендуется** найти оптимальные гиперпараметры с помощью Optuna (Tree-structured Parzen Estimator). Скрипт перебирает архитектуру (CNN, GRU, Transformer), LR, entropy coefficient, n_steps и batch_size, используя Median Pruner для ранней остановки неудачных агентов:
 ```bash
-uv run python scripts/tune_ppo.py --n_trials 50
+uv run python scripts/tune_ppo.py --n_trials 120
 ```
 *Рекомендуется запускать на отдельной машине/сервере на длительное время.*
 

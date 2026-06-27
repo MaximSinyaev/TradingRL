@@ -180,14 +180,14 @@ def objective(trial: optuna.Trial):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--n_trials", type=int, default=50)
+    parser.add_argument("--n_trials", type=int, default=120)
     args = parser.parse_args()
     
     print("🚀 Starting PPO Hyperparameter Optimization with Optuna")
     pruner = MedianPruner(n_startup_trials=10, n_warmup_steps=5)
     study = optuna.create_study(direction="maximize", pruner=pruner, study_name="ppo_transformer_tune")
     
-    study.optimize(objective, n_trials=args.n_trials)
+    study.optimize(objective, n_trials=args.n_trials, show_progress_bar=True)
     
     print("✅ Optimization finished!")
     print("Best trial:")
