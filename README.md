@@ -1,111 +1,52 @@
 # Trading RL
 
-Deep Reinforcement Learning для крипто-трейдинга (BTC, ETH).
+Deep Reinforcement Learning исследовательская платформа для крипто-трейдинга (бессрочные фьючерсы BTC, ETH, BNB).
+
+Проект использует SOTA подходы к алгоритмическому трейдингу с помощью RL, включая Purged Walk-Forward Cross Validation, детектирование режимов рынка через HMM и Байесовскую оптимизацию гиперпараметров.
 
 ## 🚀 Quick Start
 
-### Установка через uv (рекомендуется)
+### Установка (используется uv)
 
 ```bash
 # Установка зависимостей
 uv sync --all-extras
-
-# Загрузка данных
-uv run python scripts/download_data.py
-
-# Тесты
-uv run pytest tests/ -v
 ```
 
-### Установка через pip
-
+### 1. Подготовка данных и HMM
+Загрузка исторических данных, генерация признаков (Funding Rate, Open Interest, Fractional Diff) и обучение HMM-модели для детекции режимов рынка (Bull, Bear, Flat):
 ```bash
-pip install -e .
-python scripts/download_data.py
+uv run python scripts/train_hmm.py
 ```
 
-## 📦 Структура проекта
-
-```
-trading_rl/
-├── agents/               # RL агенты
-│   ├── dqn_agent.py              # DQN с Prioritized Experience Replay
-│   ├── double_dqn_agent.py       # Double DQN
-│   ├── random_agent.py            # Baseline
-│   └── prioritized_replay_buffer.py  # PER buffer
-├── custom_envs/         # Trading среды (Gymnasium)
-│   ├── trading_env_v1.py          # V1: Базовая среда
-│   ├── trading_env_v2.py          # V2: Улучшенные награды
-│   ├── trading_env_v3.py          # V3: Балансированные награды
-│   ├── trading_env_v4.py          # V4: Position sizing + shorts
-│   └── trading_env_frame_stack.py # Frame stacking для LSTM
-├── utils/               # Утилиты
-│   ├── binance_loader.py          # Загрузка данных с Binance
-│   ├── feature_generator.py       # Генерация фичей
-│   ├── train_dqn_agent.py         # Обучение агента
-│   ├── visualizer_candles.py      # Визуализация свечей
-│   └── utils.py                    # Общие утилиты
-├── scripts/             # Скрипты
-│   ├── download_data.py           # Загрузка данных
-│   ├── benchmark_agent.py          # Бенчмарк агентов
-│   └── benchmark_device_batch.py  # Бенчмарк device/batch
-├── tests/               # Тесты
-│   ├── test_trading_env_v4_edge_cases.py
-│   └── unit/test_trading_env_v1.py
-└── *.ipynb              # Ноутбуки для экспериментов
-```
-
-## 🏔️ Версии окружений
-
-| Версия | Описание |
-|--------|----------|
-| **V1** | Базовая среда с простыми наградами |
-| **V2** | Улучшенные награды, штраф за холдинг |
-| **V3** | Балансированные награды, без magic numbers |
-| **V4** | Position sizing (10-100%), shorts, MultiDiscrete action space |
-
-## 📊 Данные
-
-Данные скачиваются с Binance и кэшируются в `binance_data_cache/`:
-
-- **Символы**: BTCUSDT, ETHUSDT
-- **Интервал**: 1 минута
-- **Формат**: parquet.gz
-
-## 🤖 Агенты
-
-- **DQN**: Deep Q-Network с Prioritized Experience Replay
-- **Double DQN**: Разделяет выбор и оценку действия (reduces overestimation)
-- **Random**: Baseline для сравнения
-
-## 🧪 Эксперименты
-
-Ноутбуки для обучения и тестирования:
-
-| Ноутбук | Env | Описание |
-|---------|-----|----------|
-| `1. base_rl_test.ipynb` | V1 | Исторические эксперименты |
-| `2. base_rl_tes_v2.ipynb` | V2 | Исторические эксперименты |
-| `1. base_rl_test_env_v4.ipynb` | V4 | Полный цикл обучения v4 |
-| `5. test_v4_simple.ipynb` | V4 | Простой тест v4 |
-
-## 🧪 Тесты
-
+### 2. Оптимизация Гиперпараметров (HPO)
+Перед финальным обучением **настоятельно рекомендуется** найти оптимальные гиперпараметры с помощью Optuna (Tree-structured Parzen Estimator). Скрипт перебирает архитектуру (CNN, GRU, Transformer), LR, entropy coefficient, n_steps и batch_size, используя Median Pruner для ранней остановки неудачных агентов:
 ```bash
-uv run pytest tests/ -v
+uv run python scripts/tune_ppo.py --n_trials 50
+```
+*Рекомендуется запускать на отдельной машине/сервере на длительное время.*
+
+### 3. Тренировка Агента
+После нахождения лучших параметров, запускаем полное обучение агента (PPO). Агент обучается на непрерывных отрезках данных, из которых вырезаны (purged) валидационные куски + эмбарго (чтобы избежать заглядывания в будущее):
+```bash
+uv run python scripts/train_ppo_purged.py --exp_name "ppo_v6_final" --extractor transformer
+```
+Мониторинг процесса обучения через TensorBoard:
+```bash
+uv run tensorboard --logdir ./tensorboard_logs/
 ```
 
-## 📈 Текущее состояние
+## 📦 Ключевые компоненты
 
-- ✅ TradingEnv V4 готов (position sizing, shorts)
-- ✅ PrioritizedReplayBuffer реализован
-- ✅ Проектная структура (uv, tests, scripts)
-- 🔄 В разработке: улучшенные агенты, новые фичи
+* **Среда (TradingEnvV6):** Непрерывное пространство действий `[-1.0, 1.0]`, интерпретируемое как *Target Portfolio Weight*. Среда учитывает комиссии (0.05%), динамическое проскальзывание (на базе Garman-Klass Volatility) и штрафует за излишний оборот (Turnover Penalty).
+* **Модели (Extractors):** `GatedTransformerExtractor`, `GatedGruExtractor` и `GatedCnnExtractor`. Используют Feature-wise Linear Modulation (FiLM) для кондиционирования слоев сети на текущий режим рынка (вероятности HMM).
+* **Алгоритм:** Stable Baselines 3 `PPO` с кастомными коллбеками для Out-Of-Sample (OOS) валидации во время обучения.
 
 ## 🛠️ Технологии
 
-- Python 3.10+
-- PyTorch
+- Python 3.12+
+- PyTorch (с поддержкой MPS/CUDA)
+- Stable Baselines 3
+- Optuna (Bayesian HPO)
 - Gymnasium
-- pandas, numpy
-- uv (package manager)
+- Weights & Biases / TensorBoard

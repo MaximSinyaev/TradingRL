@@ -3,41 +3,32 @@ import torch.nn as nn
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 class GatedMlpExtractor(BaseFeaturesExtractor):
-    """
-    Custom Feature Extractor that uses HMM probabilities as a Gating Mechanism (FiLM).
-    Does NOT use Frame Stacking (n_stack=1).
-    """
     def __init__(self, observation_space, features_dim: int = 128, num_hmm_states: int = 3):
         super().__init__(observation_space, features_dim)
         self.num_hmm_states = num_hmm_states
         self.market_features_dim = observation_space.shape[0] - num_hmm_states
         
-        self.market_net = nn.Sequential(
+        self.proj = nn.Sequential(
             nn.Linear(self.market_features_dim, 256),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(256, features_dim),
-            nn.ReLU(),
-            nn.Dropout(0.3)
+            nn.ReLU()
         )
+        self.film_layer = FiLMLayer(cond_dim=self.num_hmm_states, feature_dim=256)
         
-        self.gate_net = nn.Sequential(
-            nn.Linear(self.num_hmm_states, features_dim),
-            nn.Sigmoid()
+        self.out_net = nn.Sequential(
+            nn.Linear(256, features_dim),
+            nn.ReLU()
         )
         
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
         market_obs = observations[:, :-self.num_hmm_states]
         hmm_probs = observations[:, -self.num_hmm_states:]
-        market_embeddings = self.market_net(market_obs)
-        gates = self.gate_net(hmm_probs)
-        return market_embeddings * gates
-
+        
+        x = self.proj(market_obs)
+        x = self.film_layer(x, hmm_probs)
+        market_embeddings = self.out_net(x)
+        return market_embeddings
 
 class GatedCnnExtractor(BaseFeaturesExtractor):
-    """
-    1D CNN Feature Extractor with Frame Stacking and HMM Gating.
-    """
     def __init__(self, observation_space, features_dim: int = 128, num_hmm_states: int = 3, n_stack: int = 10):
         super().__init__(observation_space, features_dim)
         self.n_stack = n_stack
@@ -49,45 +40,44 @@ class GatedCnnExtractor(BaseFeaturesExtractor):
             nn.Conv1d(in_channels=self.market_features_dim, out_channels=32, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.Conv1d(in_channels=32, out_channels=64, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Flatten()
+            nn.ReLU()
         )
         
+        # We apply FiLM to the channels of the CNN output (out_channels=64)
+        self.film_layer = FiLMLayer(cond_dim=self.num_hmm_states, feature_dim=64)
+        
+        self.flatten = nn.Flatten()
         cnn_out_dim = 64 * n_stack
-        self.market_net = nn.Sequential(
-            self.cnn,
-            nn.Linear(cnn_out_dim, features_dim),
-            nn.ReLU(),
-            nn.Dropout(0.3)
-        )
         
-        self.gate_net = nn.Sequential(
-            nn.Linear(self.num_hmm_states, features_dim),
-            nn.Sigmoid()
+        self.out_net = nn.Sequential(
+            nn.Linear(cnn_out_dim, features_dim),
+            nn.ReLU()
         )
         
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
         batch_size = observations.shape[0]
-        # Reshape: (Batch, n_stack, orig_dim)
         obs_reshaped = observations.view(batch_size, self.n_stack, self.orig_dim)
         
-        # (Batch, n_stack, market_dim)
         market_obs = obs_reshaped[:, :, :-self.num_hmm_states]
-        # HMM from the latest step
         hmm_probs = obs_reshaped[:, -1, -self.num_hmm_states:]
         
         # CNN expects (Batch, Channels, Time)
         market_obs_cnn = market_obs.permute(0, 2, 1)
-        market_embeddings = self.market_net(market_obs_cnn)
-        gates = self.gate_net(hmm_probs)
         
-        return market_embeddings * gates
-
+        x = self.cnn(market_obs_cnn) # (Batch, 64, Time)
+        
+        # FiLM on channel dimension. Need to reshape for FiLMLayer: x should have feature in last dim for our FiLMLayer!
+        # Our FiLMLayer expects last dimension to be feature_dim.
+        # x is (Batch, 64, Seq). We transpose to (Batch, Seq, 64), apply FiLM, then transpose back or just flatten.
+        x = x.permute(0, 2, 1) # (Batch, Seq, 64)
+        x = self.film_layer(x, hmm_probs)
+        
+        x = self.flatten(x)
+        market_embeddings = self.out_net(x)
+        
+        return market_embeddings
 
 class GatedGruExtractor(BaseFeaturesExtractor):
-    """
-    GRU Feature Extractor with Frame Stacking and HMM Gating.
-    """
     def __init__(self, observation_space, features_dim: int = 128, num_hmm_states: int = 3, n_stack: int = 10):
         super().__init__(observation_space, features_dim)
         self.n_stack = n_stack
@@ -95,13 +85,11 @@ class GatedGruExtractor(BaseFeaturesExtractor):
         self.num_hmm_states = num_hmm_states
         self.market_features_dim = self.orig_dim - num_hmm_states
         
-        self.gru = nn.GRU(input_size=self.market_features_dim, hidden_size=features_dim, batch_first=True)
-        self.dropout = nn.Dropout(0.3)
+        # Project market obs before GRU to apply FiLM
+        self.proj = nn.Linear(self.market_features_dim, 64)
+        self.film_layer = FiLMLayer(cond_dim=self.num_hmm_states, feature_dim=64)
         
-        self.gate_net = nn.Sequential(
-            nn.Linear(self.num_hmm_states, features_dim),
-            nn.Sigmoid()
-        )
+        self.gru = nn.GRU(input_size=64, hidden_size=features_dim, batch_first=True)
         
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
         batch_size = observations.shape[0]
@@ -110,14 +98,39 @@ class GatedGruExtractor(BaseFeaturesExtractor):
         market_obs = obs_reshaped[:, :, :-self.num_hmm_states]
         hmm_probs = obs_reshaped[:, -1, -self.num_hmm_states:]
         
-        # GRU returns (output, hidden)
-        _, hidden = self.gru(market_obs)
-        # hidden shape: (1, Batch, hidden_size)
-        market_embeddings = hidden.squeeze(0)
-        market_embeddings = self.dropout(market_embeddings)
+        x = self.proj(market_obs) # (Batch, Seq, 64)
+        x = self.film_layer(x, hmm_probs) # FiLM modulates the input sequence
         
-        gates = self.gate_net(hmm_probs)
-        return market_embeddings * gates
+        _, hidden = self.gru(x)
+        market_embeddings = hidden.squeeze(0)
+        
+        return market_embeddings
+
+class FiLMLayer(nn.Module):
+    """
+    Feature-wise Linear Modulation (FiLM) layer.
+    Conditions the input features based on auxiliary conditioning data (e.g. HMM probabilities).
+    """
+    def __init__(self, cond_dim: int, feature_dim: int):
+        super().__init__()
+        self.film_gen = nn.Linear(cond_dim, feature_dim * 2)
+        # Initialize to identity transform (gamma=0, beta=0)
+        nn.init.zeros_(self.film_gen.weight)
+        nn.init.zeros_(self.film_gen.bias)
+
+    def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+        # x shape: (Seq, Batch, Feature) or (Batch, Feature)
+        # cond shape: (Batch, Cond_Dim)
+        
+        film_params = self.film_gen(cond) # (Batch, feature_dim * 2)
+        gamma, beta = film_params.chunk(2, dim=-1) # (Batch, feature), (Batch, feature)
+        
+        if x.dim() == 3:
+            # Broadcast to (Seq, Batch, Feature)
+            gamma = gamma.unsqueeze(0)
+            beta = beta.unsqueeze(0)
+            
+        return x * (1 + gamma) + beta
 
 
 class PositionalEncoding(nn.Module):
@@ -167,10 +180,7 @@ class GatedTransformerExtractor(BaseFeaturesExtractor):
             # Removed dropout here as well
         )
         
-        self.gate_net = nn.Sequential(
-            nn.Linear(self.num_hmm_states, features_dim),
-            nn.Sigmoid()
-        )
+        self.film_layer = FiLMLayer(cond_dim=self.num_hmm_states, feature_dim=d_model)
         
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
         batch_size = observations.shape[0]
@@ -187,6 +197,10 @@ class GatedTransformerExtractor(BaseFeaturesExtractor):
         
         # Transformer expects (Seq, Batch, Feature)
         x = x.permute(1, 0, 2)
+        
+        # Apply FiLM Conditioning on early features!
+        x = self.film_layer(x, hmm_probs)
+        
         x = self.pos_encoder(x)
         
         # Pass through transformer
@@ -196,7 +210,6 @@ class GatedTransformerExtractor(BaseFeaturesExtractor):
         last_out = out[-1, :, :] # (Batch, d_model)
         
         market_embeddings = self.output_proj(last_out)
-        gates = self.gate_net(hmm_probs)
         
-        return market_embeddings * gates
+        return market_embeddings
 

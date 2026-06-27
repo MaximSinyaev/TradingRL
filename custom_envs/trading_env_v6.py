@@ -85,47 +85,53 @@ class TradingEnvV6(TradingEnvV5):
             buy_price = mid_price * (1 + slippage)
             sell_price = mid_price * (1 - slippage)
             
-            # target_exposure is the total $ value we want in the asset
-            target_exposure = target_weight * current_portfolio_value * self.leverage
-            current_exposure = current_weight * current_portfolio_value * self.leverage
+            # Close existing positions if we are flipping or reducing exposure
+            if current_weight > 0 and target_weight < current_weight:
+                # Need to reduce long
+                vol_to_close = sum(v for _, v in self.positions_long) * ((current_weight - max(target_weight, 0)) / current_weight)
+                if vol_to_close > 0:
+                    realized_pnl = self._close_long(vol_to_close, sell_price)
+                    self.total_realized_pnl += realized_pnl
+                    executed = True
+            elif current_weight < 0 and target_weight > current_weight:
+                # Need to reduce short
+                vol_to_close = sum(v for _, v in self.positions_short) * ((abs(current_weight) - abs(min(target_weight, 0))) / abs(current_weight))
+                if vol_to_close > 0:
+                    realized_pnl = self._close_short(vol_to_close, buy_price)
+                    self.total_realized_pnl += realized_pnl
+                    executed = True
+
+            # Re-calculate portfolio after closures to know how much cash we have
+            current_portfolio_value = self.get_portfolio_value(mid_price)
+            current_weight = self._get_current_weight(mid_price, current_portfolio_value)
             
-            delta_exposure = target_exposure - current_exposure
-            
-            # Since delta_exposure might exceed our available deposit if we switch from -1 to 1,
-            # BaseTradingEnv's _execute_buy/sell handles the max cap automatically based on fraction.
-            # We convert delta_exposure to a fraction of the available_deposit.
-            
-            # The maximum exposure we can have is current_portfolio_value * leverage
-            # When flipping from -1 to 1, delta_exposure is 2 * max_exposure.
-            available_for_trade = current_portfolio_value * self.leverage
-            
-            if delta_exposure > 0:
-                # Need to Buy
-                if self.positions_short:
-                    # Closing short first
-                    # _execute_buy handles closing shorts if they exist, then opens long
-                    amount_to_spend = delta_exposure
-                else:
-                    amount_to_spend = delta_exposure
-                    
-                size_fraction = amount_to_spend / (available_for_trade + 1e-9)
-                # Cap at 1.0 to just mean "use everything you have"
-                size_fraction = np.clip(size_fraction, 0.0, 1.0)
-                
-                if size_fraction > 0.01:
-                    executed = self._execute_buy(size_fraction, buy_price)
-                    if executed: trade_size_fraction = size_fraction
-                    
-            elif delta_exposure < 0:
-                # Need to Sell
-                amount_to_spend = abs(delta_exposure)
-                size_fraction = amount_to_spend / (available_for_trade + 1e-9)
-                size_fraction = np.clip(size_fraction, 0.0, 1.0)
-                
-                if size_fraction > 0.01:
-                    executed = self._execute_sell(size_fraction, sell_price)
-                    if executed: trade_size_fraction = -size_fraction
-        
+            # Open new positions if needed
+            if target_weight > current_weight and target_weight > 0:
+                # Open Long
+                amount_to_spend = (target_weight - max(current_weight, 0)) * current_portfolio_value * self.leverage
+                amount_to_spend = min(amount_to_spend, self.deposit)
+                if amount_to_spend > 1.0:
+                    amount_after_fee = amount_to_spend * (1 - self.commission)
+                    volume = amount_after_fee / buy_price
+                    self.positions_long.append((buy_price, volume))
+                    self._update_avg_price_long()
+                    self.deposit -= amount_to_spend
+                    executed = True
+            elif target_weight < current_weight and target_weight < 0:
+                # Open Short
+                amount_to_spend = (abs(target_weight) - abs(min(current_weight, 0))) * current_portfolio_value * self.leverage
+                amount_to_spend = min(amount_to_spend, self.deposit)
+                if amount_to_spend > 1.0:
+                    amount_after_fee = amount_to_spend * (1 - self.commission)
+                    volume = amount_after_fee / sell_price
+                    self.positions_short.append((sell_price, volume))
+                    self._update_avg_price_short()
+                    self.deposit -= amount_to_spend
+                    executed = True
+
+            if executed:
+                trade_size_fraction = delta_weight
+
         # 2. Apply Funding Fees
         if 'fundingRate' in self.df.columns:
             funding_rate = self.df['fundingRate'].iloc[self.current_step]

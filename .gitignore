@@ -80,3 +80,4 @@ scratch/
 *.gz
 *.db
 .pytests_cache/
+.memory/

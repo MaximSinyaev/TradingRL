@@ -46,6 +46,9 @@ def create_ppo_agent(
     else:
         raise ValueError("extractor_type must be 'mlp', 'cnn', 'gru', or 'transformer'")
         
+    # Add weight decay for regularization (since we removed dropout)
+    policy_kwargs["optimizer_kwargs"] = dict(weight_decay=1e-5)
+        
     if extractor_type == "mlp":
         device = "cpu"
     else:
