@@ -52,7 +52,8 @@ def create_ppo_agent(
     if extractor_type == "mlp":
         device = "cpu"
     else:
-        device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+        # We skip 'mps' globally because benchmark showed CPU is 3x faster for our PPO envs
+        device = "cuda" if torch.cuda.is_available() else "cpu"
         
     print(f"🚀 Initializing PPO ({extractor_type.upper()}) on device: {device}")
     

@@ -92,7 +92,8 @@ def objective(trial: optuna.Trial):
     if args.device != "auto":
         device = args.device
     else:
-        device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+        # We skip 'mps' because CPU is benchmarked to be 3x-10x faster for our PPO environments
+        device = "cuda" if torch.cuda.is_available() else "cpu"
         
     print(f"\n{'='*50}")
     print(f"🚀 Starting Trial {trial.number}")
@@ -170,7 +171,6 @@ def objective(trial: optuna.Trial):
         tensorboard_log=tb_log_dir
     )
     
-    # 4. Train with Eval Pruning (Evaluating every ~100k steps)
     # 4. Train with Eval Pruning (Evaluating every ~100k steps)
     eval_callback = TrialEvalCallback(eval_env, trial, n_eval_episodes=3, eval_freq=100000)
     wandb_callback = WandbCallback(verbose=0)
