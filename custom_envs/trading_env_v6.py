@@ -176,7 +176,7 @@ class TradingEnvV6(TradingEnvV5):
         if drawdown <= -self.max_drawdown_pct:
             done = True
             margin_call = True
-            reward -= 0.1 # Huge penalty for margin call
+            reward -= 0.5 # Huge penalty for margin call
         elif self.current_step - self.start_index >= self.t_max:
             done = True
         elif self.deposit <= 0.01 and not self.positions_long and not self.positions_short:

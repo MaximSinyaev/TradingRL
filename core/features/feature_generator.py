@@ -82,8 +82,6 @@ class FeatureGenerator:
         signal_line = self.compute_ema(macd_line, self.macd_signal)
         macd_hist = macd_line - signal_line
         return pd.DataFrame({
-            'macd_line': macd_line,
-            'macd_signal': signal_line,
             'macd_hist': macd_hist
         })
         
@@ -186,8 +184,7 @@ class FeatureGenerator:
 
         macd = self.compute_macd(price)
         df = df.join(macd)
-        df['macd_line_norm'] = df['macd_line'] / (df['ema_base'] + 1e-9)
-        df['macd_signal_norm'] = df['macd_signal'] / (df['ema_base'] + 1e-9)
+        # Нормализация MACD через ema_base
         df['macd_hist_norm'] = df['macd_hist'] / (df['ema_base'] + 1e-9)
 
         # 6. Новые фичи (Garman-Klass Volatility, Fractional Diff)
@@ -244,8 +241,7 @@ class FeatureGenerator:
             f'open_over_ema_{self.ema_span}', f'high_over_ema_{self.ema_span}',
             f'low_over_ema_{self.ema_span}', f'close_over_ema_{self.ema_span}',
             'log_return', 'rsi_norm', 'normalized_volume',
-            'macd_line_norm', 'macd_signal_norm', 'macd_hist_norm',
-            'gk_volatility', 'frac_diff_norm',
+            'macd_hist_norm', 'gk_volatility', 'frac_diff_norm',
             'funding_rate', 'funding_delta', 'oi_delta',
             'daily_trend', 'weekly_momentum', 'fr_x_oi'
         ]
