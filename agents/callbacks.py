@@ -94,95 +94,30 @@ class OOSEvalCallback(BaseCallback):
 
     def __init__(
         self,
-        val_dfs: dict[str, pd.DataFrame],
-        val_slices: dict[str, tuple[str, str]],
+        eval_envs_dict: dict,
         eval_freq: int = 50000,
         experiment_name: Optional[str] = None,
         best_model_save_path: Optional[str] = None,
         verbose: int = 0,
-        # Environment params (must match training environment)
-        initial_deposit: float = 100_000.0,
-        commission: float = 0.0005,
-        leverage: float = 1.0,
-        base_slippage: float = 0.0001,
-        volatility_factor: float = 0.05,
-        downside_penalty: float = 3.0,
-        max_drawdown_pct: float = 0.10,
-        weight_tolerance: float = 0.05,
     ):
         super().__init__(verbose=verbose)
 
-        self.val_dfs = val_dfs
-        self.val_slices = val_slices
         self.eval_freq = eval_freq
         self.experiment_name = experiment_name
         self.best_model_save_path = best_model_save_path
-
-        # Store asset names for logging
-        self.asset_names = list(val_dfs.keys())
-        self.total_assets = len(self.asset_names)
-        self.asset_to_idx = {name: idx for idx, name in enumerate(self.asset_names)}
-
-        # Environment params for creating validation environments
-        self.env_params = {
-            "initial_deposit": initial_deposit,
-            "commission": commission,
-            "leverage": leverage,
-            "base_slippage": base_slippage,
-            "volatility_factor": volatility_factor,
-            "downside_penalty": downside_penalty,
-            "max_drawdown_pct": max_drawdown_pct,
-            "weight_tolerance": weight_tolerance,
-        }
 
         # Best model tracking
         self.best_sortino = -np.inf
         self.best_model = None
 
-        # Validation environments: dict[(asset, slice), TradingEnvV6]
-        self.val_envs: dict[tuple[str, str], TradingEnvV6] = {}
+        self.val_envs = eval_envs_dict
+        
+        # Deduce asset_names and val_slices from eval_envs_dict keys
+        self.asset_names = list(set([k[0] for k in self.val_envs.keys()]))
+        self.val_slices = {k[1]: None for k in self.val_envs.keys()}
 
     def _init_callback(self) -> None:
-        """Initialize validation environments after parent callback is set."""
-        # Create environments for each asset × slice combination
-        for asset_name, val_df in self.val_dfs.items():
-            for slice_name, (start_date, end_date) in self.val_slices.items():
-                # Slice by datetime index or timestamp column
-                if isinstance(val_df.index, pd.DatetimeIndex):
-                    df_slice = val_df.loc[start_date:end_date]
-                elif 'timestamp' in val_df.columns:
-                    df_slice = val_df[
-                        (val_df['timestamp'] >= start_date) &
-                        (val_df['timestamp'] <= end_date)
-                    ]
-                else:
-                    raise ValueError(
-                        f"val_dfs['{asset_name}'] must have DatetimeIndex or 'timestamp' column for slicing"
-                    )
-
-                # Skip empty slices
-                if len(df_slice) == 0:
-                    if self.verbose > 0:
-                        print(f"Warning: Empty slice {asset_name}/{slice_name}, skipping")
-                    continue
-
-                # Reset index for environment (env expects sequential index)
-                df_slice = df_slice.reset_index(drop=True)
-
-                # Create validation environment
-                env = TradingEnvV6(
-                    df=df_slice,
-                    domain_randomization=False,  # Deterministic validation
-                    t_max=None,  # Use full slice
-                    total_assets=self.total_assets,
-                    fixed_asset_idx=self.asset_to_idx[asset_name],
-                    **self.env_params
-                )
-                self.val_envs[(asset_name, slice_name)] = env
-
-        if self.verbose > 0:
-            print(f"OOSEvalCallback: Created {len(self.val_envs)} validation environments "
-                  f"({len(self.val_dfs)} assets × {len(self.val_slices)} slices)")
+        pass
 
     def _evaluate_on_slice(self, env: TradingEnvV6) -> dict:
         """Evaluate model on a single validation slice.
@@ -193,16 +128,18 @@ class OOSEvalCallback(BaseCallback):
         Returns:
             Dict with metrics: pnl, sortino, num_steps
         """
-        obs, _ = env.reset()
+        obs = env.reset()
         done = False
         step_count = 0
 
         while not done:
             action, _ = self.model.predict(obs, deterministic=True)
-            obs, reward, done, truncated, info = env.step(action)
+            obs, reward, dones, infos = env.step(action)
+            done = dones[0]
             step_count += 1
 
-        # Get final metrics from info
+        # Get final metrics from info (infos is a list of dicts for VecEnv)
+        info = infos[0]
         pnl = info.get("pnl", 0.0)
         sortino = info.get("episode_sortino", 0.0)
 

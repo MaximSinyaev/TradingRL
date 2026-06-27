@@ -103,11 +103,20 @@ class TradingEnvV5(BaseTradingEnv):
             self.df = self.dfs[0]
             self.features = np.stack(self.df['state_vector'].values).astype(np.float32)
         elif len(self.dfs) > 1:
-            self.current_asset_idx = np.random.randint(0, len(self.dfs))
-            self.df = self.dfs[self.current_asset_idx]
+            chunk_idx = np.random.randint(0, len(self.dfs))
+            self.df = self.dfs[chunk_idx]
+            if 'asset_idx' in self.df.columns:
+                self.current_asset_idx = int(self.df['asset_idx'].iloc[0])
+            else:
+                self.current_asset_idx = chunk_idx % self.num_assets
             self.features = np.stack(self.df['state_vector'].values).astype(np.float32)
         else:
-            self.current_asset_idx = 0
+            self.df = self.dfs[0]
+            if 'asset_idx' in self.df.columns:
+                self.current_asset_idx = int(self.df['asset_idx'].iloc[0])
+            else:
+                self.current_asset_idx = 0
+            self.features = np.stack(self.df['state_vector'].values).astype(np.float32)
             
         if self.domain_randomization:
             self.commission = np.random.uniform(0.0003, 0.001)

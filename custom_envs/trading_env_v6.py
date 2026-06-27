@@ -95,7 +95,9 @@ class TradingEnvV6(TradingEnvV5):
             # BaseTradingEnv's _execute_buy/sell handles the max cap automatically based on fraction.
             # We convert delta_exposure to a fraction of the available_deposit.
             
-            available_for_trade = self.deposit * self.leverage
+            # The maximum exposure we can have is current_portfolio_value * leverage
+            # When flipping from -1 to 1, delta_exposure is 2 * max_exposure.
+            available_for_trade = current_portfolio_value * self.leverage
             
             if delta_exposure > 0:
                 # Need to Buy
@@ -153,6 +155,10 @@ class TradingEnvV6(TradingEnvV5):
             reward = step_return
         else:
             reward = step_return * self.downside_penalty
+            
+        # Add turnover penalty (to avoid micro-trading)
+        # Using a small penalty coefficient, e.g., 0.001
+        reward -= abs(delta_weight) * 0.001
             
         self.prev_portfolio_value = new_portfolio_value
         

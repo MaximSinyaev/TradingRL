@@ -141,7 +141,19 @@ class FeatureGenerator:
         return series.rolling(window=len(w)).apply(apply_weights, raw=True)
 
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return df
+            
         df = df.copy()
+
+        # 0. Drop leading NaNs from raw data (e.g., missing OI/volume in early history)
+        # We find the first index where ALL columns have valid data
+        first_valid_idx = df.apply(lambda x: x.first_valid_index()).max()
+        if pd.notna(first_valid_idx):
+            df = df.loc[first_valid_idx:].reset_index(drop=True)
+            
+        if df.empty:
+            return df
         
         df['t'] = np.arange(1, len(df) + 1)
 
@@ -203,10 +215,7 @@ class FeatureGenerator:
 
         df['fr_x_oi'] = df['funding_rate'] * df['oi_delta']
 
-        # Заполняем возможные NaN перед формированием вектора
         pd.set_option('future.no_silent_downcasting', True)
-        df = df.ffill()
-        df = df.bfill()
         df = df.infer_objects(copy=False)
 
         # 7.5 Интеграция HMM
@@ -247,11 +256,35 @@ class FeatureGenerator:
         )
 
         final_features = available_base_features + ema_features + ema_diff_features + hmm_features
+        
+        # Fill intermediate NaNs (e.g. Bybit/Binance API outages in the middle of the history).
+        # We ALREADY dropped the massive leading NaNs using first_valid_index at the top of the file!
+        # Any NaNs left here are tiny gaps (like 144 hours of missing Open Interest in 2021).
+        # We MUST fill them with 0 (meaning 'no change' / 'neutral') because dropping them
+        # would create a time-jump in the RL environment, breaking the agent's sequence.
+        df[final_features] = df[final_features].fillna(0)
+        
         df['state_vector'] = df[final_features].values.tolist()
 
         # 9. Убираем строки, где не успели стабилизироваться EMA и окно frac_diff
         max_lookback = 42 # for weekly_momentum
-        cutoff = max(self.ema_span, 100, max_lookback) # 100 это глубина весов frac_diff
+        # frac_diff_norm needs 100 (for frac_diff) + ema_span (for the rolling z-score)
+        cutoff = max(self.ema_span, 100 + self.ema_span, max_lookback)
         df = df.iloc[cutoff:].reset_index(drop=True)
+        
+        # 10. Строгая проверка на наличие NaN в фичах и критических колонках
+        critical_cols = final_features + ['close']
+        if 'gk_volatility' in df.columns:
+            critical_cols.append('gk_volatility')
+        if 'fundingRate' in df.columns:
+            critical_cols.append('fundingRate')
+        
+        existing_critical = [c for c in critical_cols if c in df.columns]
+        nan_counts = df[existing_critical].isna().sum()
+        nan_with_values = nan_counts[nan_counts > 0]
+        if len(nan_with_values) > 0:
+            error_msg = f"Data validation failed: NaNs found in critical columns after cutoff.\nNaN Statistics:\n{nan_with_values.to_string()}"
+            print(f"❌ {error_msg}")
+            raise ValueError(error_msg)
 
         return df

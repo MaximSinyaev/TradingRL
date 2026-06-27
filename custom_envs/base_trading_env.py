@@ -50,6 +50,7 @@ class BaseTradingEnv(gym.Env):
         return value
 
     def _execute_buy(self, size_fraction: float, price: float) -> bool:
+        executed = False
         if self.positions_short:
             total_short_volume = sum(v for _, v in self.positions_short)
             if total_short_volume * price > 0:
@@ -57,16 +58,19 @@ class BaseTradingEnv(gym.Env):
                 realized_pnl = self._close_short(volume_to_close, price)
                 self.total_realized_pnl += realized_pnl
                 self.trades.append({"type": "close_short", "volume": volume_to_close, "pnl": realized_pnl})
-                return True
+                executed = True
+                
+                if size_fraction < 0.99:
+                    return True
 
         if not self._can_trade():
-            return False
+            return executed
 
         available_for_trade = self.deposit * self.leverage
         amount_to_spend = min(available_for_trade * size_fraction, self.deposit)
 
         if amount_to_spend <= 0.01:
-            return False
+            return executed
 
         amount_after_fee = amount_to_spend * (1 - self.commission)
         volume = amount_after_fee / price
@@ -78,6 +82,7 @@ class BaseTradingEnv(gym.Env):
         return True
 
     def _execute_sell(self, size_fraction: float, price: float) -> bool:
+        executed = False
         if self.positions_long:
             total_long_volume = sum(v for _, v in self.positions_long)
             if total_long_volume * price > 0:
@@ -85,16 +90,19 @@ class BaseTradingEnv(gym.Env):
                 realized_pnl = self._close_long(volume_to_close, price)
                 self.total_realized_pnl += realized_pnl
                 self.trades.append({"type": "close_long", "volume": volume_to_close, "pnl": realized_pnl})
-                return True
+                executed = True
+                
+                if size_fraction < 0.99:
+                    return True
 
         if not self._can_trade():
-            return False
+            return executed
 
         available_for_trade = self.deposit * self.leverage
         amount_to_spend = min(available_for_trade * size_fraction, self.deposit)
 
         if amount_to_spend <= 0.01:
-            return False
+            return executed
 
         amount_after_fee = amount_to_spend * (1 - self.commission)
         volume = amount_after_fee / price
