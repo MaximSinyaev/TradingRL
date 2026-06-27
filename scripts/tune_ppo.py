@@ -85,6 +85,11 @@ def objective(trial: optuna.Trial):
     # Invalid combo check
     if batch_size > n_steps:
         raise optuna.TrialPruned()
+        
+    print(f"\n{'='*50}")
+    print(f"🚀 Starting Trial {trial.number}")
+    print(f"⚙️ Parameters: {trial.params}")
+    print(f"{'='*50}\n")
 
     import wandb
     from wandb.integration.sb3 import WandbCallback
@@ -160,14 +165,12 @@ def objective(trial: optuna.Trial):
     )
     
     # 4. Train with Eval Pruning (Evaluating every ~100k steps)
-    from stable_baselines3.common.callbacks import ProgressBarCallback
-    
+    # 4. Train with Eval Pruning (Evaluating every ~100k steps)
     eval_callback = TrialEvalCallback(eval_env, trial, n_eval_episodes=3, eval_freq=100000)
     wandb_callback = WandbCallback(verbose=0)
-    progress_callback = ProgressBarCallback()
     
     try:
-        model.learn(total_timesteps=1500000, callback=[eval_callback, wandb_callback, progress_callback])
+        model.learn(total_timesteps=1500000, callback=[eval_callback, wandb_callback])
     except (AssertionError, ValueError) as e:
         wandb.finish()
         raise optuna.TrialPruned()
