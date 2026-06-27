@@ -25,6 +25,8 @@ dependencies = [
     "wandb>=0.28.0",
     "tensorboard>=2.20.0",
     "setuptools<70",
+    "optuna>=4.9.0",
+    "optuna-integration>=4.9.0",
 ]
 
 [project.optional-dependencies]
