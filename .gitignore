@@ -72,6 +72,7 @@ assistant_docs/
 
 # Local workspace models and scratch
 models/*
+!models/hmm_model.pkl
 scratch/
 
 .claude/
