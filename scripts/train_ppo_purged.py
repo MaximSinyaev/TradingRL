@@ -49,8 +49,12 @@ def main():
     # 1. Download Data and Generate Features FIRST
     symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
     processed_dfs_dict = {}
-
-    fg = FeatureGenerator()
+    
+    # Check or train HMM model automatically
+    from core.features.hmm_helper import get_or_train_hmm
+    hmm_path = get_or_train_hmm()
+    
+    fg = FeatureGenerator(hmm_path=hmm_path)
 
     for i, sym in enumerate(symbols):
         print(f"Loading and processing {sym}...")

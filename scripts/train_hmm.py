@@ -15,7 +15,7 @@ from core.data.data_splitter import create_purged_train_val_split
 from core.features.feature_generator import FeatureGenerator
 from core.config import VAL_SLICES
 
-def train_hmm():
+def train_hmm(save_path: str = None):
     symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
     print(f"📥 Loading historical data for HMM training on {symbols}...")
     
@@ -47,7 +47,8 @@ def train_hmm():
         return
 
     print("📊 Generating base features for all training chunks...")
-    fg = FeatureGenerator()
+    # Explicitly disable HMM loading during feature generation for training
+    fg = FeatureGenerator(hmm_path=None)
     
     all_features = []
     for chunk in train_dfs:
@@ -92,13 +93,16 @@ def train_hmm():
         print("⚠️ HMM did NOT converge. Consider increasing n_iter or checking data scaling.")
         
     # Save the model and scaler
-    models_dir = Path(__file__).parent.parent / "models"
-    models_dir.mkdir(exist_ok=True)
+    if save_path is None:
+        models_dir = Path(__file__).parent.parent / "models"
+        models_dir.mkdir(exist_ok=True)
+        save_path = str(models_dir / "hmm_model.pkl")
+    else:
+        Path(save_path).parent.mkdir(exist_ok=True, parents=True)
+        
+    joblib.dump({"model": hmm_model, "scaler": scaler}, save_path)
     
-    model_path = models_dir / "hmm_model_train_only.pkl"
-    joblib.dump({"model": hmm_model, "scaler": scaler}, model_path)
-    
-    print(f"💾 Universal HMM Model and Scaler saved to {model_path}")
+    print(f"💾 Universal HMM Model and Scaler saved to {save_path}")
     
     # Optional: print regime characteristics to see what the HMM learned
     hidden_states = hmm_model.predict(X_scaled)

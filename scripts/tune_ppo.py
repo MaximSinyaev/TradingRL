@@ -14,16 +14,21 @@ from agents.callbacks import OOSEvalCallback
 
 # Global variables to hold data
 global_train_dfs = None
-global_val_df_slice = None
+global_val_dfs_dict = None
 
 def get_data():
-    global global_train_dfs, global_val_df_slice
+    global global_train_dfs, global_val_dfs_dict
     if global_train_dfs is not None:
-        return global_train_dfs, global_val_df_slice
+        return global_train_dfs, global_val_dfs_dict
 
     symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
     dfs_dict = {}
-    fg = FeatureGenerator()
+    
+    # Check or train HMM model automatically
+    from core.features.hmm_helper import get_or_train_hmm
+    hmm_path = get_or_train_hmm()
+    
+    fg = FeatureGenerator(hmm_path=hmm_path)
     
     for i, sym in enumerate(symbols):
         print(f"Loading and processing {sym}...")
@@ -38,13 +43,9 @@ def get_data():
         embargo_candles=42
     )
     
-    # Using the first validation slice for tuning
-    slice_name = list(VAL_SLICES.keys())[0]
-    val_df_slice = val_dfs_dict["BTCUSDT"][slice_name]
-    
     global_train_dfs = train_dfs
-    global_val_df_slice = val_df_slice
-    return train_dfs, val_df_slice
+    global_val_dfs_dict = val_dfs_dict
+    return train_dfs, val_dfs_dict
 
 class TrialEvalCallback(EvalCallback):
     """Callback used for evaluating and reporting a trial."""
@@ -70,7 +71,7 @@ class TrialEvalCallback(EvalCallback):
         return True
 
 def objective(trial: optuna.Trial):
-    train_dfs, val_df_slice = get_data()
+    train_dfs, val_dfs_dict = get_data()
     
     # 1. Sample Hyperparameters
     extractor_type = trial.suggest_categorical("extractor", ["cnn", "gru", "transformer"])
@@ -85,18 +86,37 @@ def objective(trial: optuna.Trial):
     if batch_size > n_steps:
         raise optuna.TrialPruned()
 
+    import wandb
+    from wandb.integration.sb3 import WandbCallback
+    import os
+
+    run_name = f"trial_{trial.number}_{extractor_type}_lr{learning_rate:.1e}"
+    run = wandb.init(
+        project="trading_rl_hpo",
+        name=run_name,
+        config=trial.params,
+        reinit=True,
+        sync_tensorboard=True,
+    )
+
     # 2. Setup Environments
     train_env = DummyVecEnv([lambda df=train_dfs: TradingEnvV6(df=df, total_assets=3, t_max=1440)])
     train_env = VecFrameStack(train_env, n_stack=N_STACK)
     train_env = VecNormalize(train_env, norm_obs=True, norm_reward=False, clip_obs=10.0)
     
-    eval_env = DummyVecEnv([lambda df=val_df_slice: TradingEnvV6(df=df, total_assets=3, domain_randomization=False, t_max=None)])
+    # Create evaluation environments for 4 slices
+    eval_envs_list = []
+    for slice_name in ["bull_1", "bear_1", "flat_1", "bear_2"]:
+        # Capture the dataframe properly in the lambda
+        df_slice = val_dfs_dict["BTCUSDT"][slice_name]
+        eval_envs_list.append(lambda df=df_slice: TradingEnvV6(df=df, total_assets=3, domain_randomization=False, t_max=None))
+        
+    eval_env = DummyVecEnv(eval_envs_list)
     eval_env = VecFrameStack(eval_env, n_stack=N_STACK)
     eval_env = VecNormalize(eval_env, norm_obs=True, norm_reward=False, clip_obs=10.0)
     eval_env.training = False
 
     # 3. Create Model
-    # We must patch create_ppo_agent to accept kwargs or just create it here
     from stable_baselines3 import PPO
     import torch
     from agents.extractors import GatedTransformerExtractor, GatedGruExtractor, GatedCnnExtractor
@@ -110,12 +130,17 @@ def objective(trial: optuna.Trial):
     else:
         ext_class = GatedTransformerExtractor
     
+    hmm_cols = [c for c in train_dfs[0].columns if 'hmm_regime' in c]
+    num_hmm_states = len(hmm_cols)
+    
     policy_kwargs = dict(
         features_extractor_class=ext_class,
-        features_extractor_kwargs=dict(features_dim=128, num_hmm_states=3, n_stack=N_STACK),
+        features_extractor_kwargs=dict(features_dim=128, num_hmm_states=num_hmm_states, n_stack=N_STACK),
         net_arch=dict(pi=[64, 64], vf=[64, 64]),
         optimizer_kwargs=dict(weight_decay=1e-5)
     )
+    
+    tb_log_dir = os.path.join("tensorboard_logs", "hpo", run_name)
     
     model = PPO(
         "MlpPolicy",
@@ -130,22 +155,28 @@ def objective(trial: optuna.Trial):
         ent_coef=ent_coef,
         policy_kwargs=policy_kwargs,
         device=device,
-        verbose=0
+        verbose=0,
+        tensorboard_log=tb_log_dir
     )
     
-    # 4. Train with Eval Pruning
-    eval_callback = TrialEvalCallback(eval_env, trial, eval_freq=50000)
+    # 4. Train with Eval Pruning (Evaluating every ~100k steps)
+    eval_callback = TrialEvalCallback(eval_env, trial, n_eval_episodes=3, eval_freq=100000)
+    wandb_callback = WandbCallback(verbose=0)
     
     try:
-        model.learn(total_timesteps=300000, callback=eval_callback)
+        model.learn(total_timesteps=1500000, callback=[eval_callback, wandb_callback])
     except (AssertionError, ValueError) as e:
-        # Sometimes models collapse to NaN
+        wandb.finish()
         raise optuna.TrialPruned()
         
     if eval_callback.is_pruned:
+        wandb.finish()
         raise optuna.TrialPruned()
         
-    return eval_callback.last_mean_reward
+    reward = eval_callback.last_mean_reward
+    wandb.log({"final_val_reward": reward})
+    wandb.finish()
+    return reward
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -153,14 +184,15 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     print("🚀 Starting PPO Hyperparameter Optimization with Optuna")
-    pruner = MedianPruner(n_startup_trials=5, n_warmup_steps=1)
+    pruner = MedianPruner(n_startup_trials=10, n_warmup_steps=5)
     study = optuna.create_study(direction="maximize", pruner=pruner, study_name="ppo_transformer_tune")
+    
     study.optimize(objective, n_trials=args.n_trials)
     
     print("✅ Optimization finished!")
     print("Best trial:")
     trial = study.best_trial
-    print(f"  Value (Mean Reward): {trial.value}")
+    print(f"  Value (Mean Reward / Proxy Sortino): {trial.value}")
     print("  Params: ")
     for key, value in trial.params.items():
         print(f"    {key}: {value}")

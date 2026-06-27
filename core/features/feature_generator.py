@@ -42,15 +42,19 @@ class FeatureGenerator:
         if hmm_path is not None:
             hmm_file = Path(hmm_path)
             if not hmm_file.exists():
-                raise FileNotFoundError(f"❌ HMM model file not found at {hmm_file}. "
-                                        f"Please check the path or set hmm_path=None if the model does not use HMM.")
-            try:
-                data = joblib.load(hmm_file)
-                self.hmm_model = data["model"]
-                self.hmm_scaler = data["scaler"]
-                print(f"✅ HMM Model loaded from {hmm_file}")
-            except Exception as e:
-                raise RuntimeError(f"❌ Failed to load HMM model from {hmm_file}. Error: {e}")
+                print(f"⚠️ HMM model file not found at {hmm_file}. HMM features will be disabled.")
+                self.hmm_model = None
+                self.hmm_scaler = None
+            else:
+                try:
+                    data = joblib.load(hmm_file)
+                    self.hmm_model = data["model"]
+                    self.hmm_scaler = data["scaler"]
+                    print(f"✅ HMM Model loaded from {hmm_file}")
+                except Exception as e:
+                    print(f"❌ Failed to load HMM model from {hmm_file}. Error: {e}")
+                    self.hmm_model = None
+                    self.hmm_scaler = None
 
     def compute_ema(self, series: pd.Series, span: int) -> pd.Series:
         return series.ewm(span=span, adjust=False).mean()

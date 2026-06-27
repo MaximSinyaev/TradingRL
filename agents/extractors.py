@@ -12,7 +12,7 @@ class GatedMlpExtractor(BaseFeaturesExtractor):
             nn.Linear(self.market_features_dim, 256),
             nn.ReLU()
         )
-        self.film_layer = FiLMLayer(cond_dim=self.num_hmm_states, feature_dim=256)
+        self.film_layer = FiLMLayer(cond_dim=self.num_hmm_states, feature_dim=256, batch_first=True)
         
         self.out_net = nn.Sequential(
             nn.Linear(256, features_dim),
@@ -44,7 +44,7 @@ class GatedCnnExtractor(BaseFeaturesExtractor):
         )
         
         # We apply FiLM to the channels of the CNN output (out_channels=64)
-        self.film_layer = FiLMLayer(cond_dim=self.num_hmm_states, feature_dim=64)
+        self.film_layer = FiLMLayer(cond_dim=self.num_hmm_states, feature_dim=64, batch_first=True)
         
         self.flatten = nn.Flatten()
         cnn_out_dim = 64 * n_stack
@@ -87,7 +87,7 @@ class GatedGruExtractor(BaseFeaturesExtractor):
         
         # Project market obs before GRU to apply FiLM
         self.proj = nn.Linear(self.market_features_dim, 64)
-        self.film_layer = FiLMLayer(cond_dim=self.num_hmm_states, feature_dim=64)
+        self.film_layer = FiLMLayer(cond_dim=self.num_hmm_states, feature_dim=64, batch_first=True)
         
         self.gru = nn.GRU(input_size=64, hidden_size=features_dim, batch_first=True)
         
@@ -111,24 +111,30 @@ class FiLMLayer(nn.Module):
     Feature-wise Linear Modulation (FiLM) layer.
     Conditions the input features based on auxiliary conditioning data (e.g. HMM probabilities).
     """
-    def __init__(self, cond_dim: int, feature_dim: int):
+    def __init__(self, cond_dim: int, feature_dim: int, batch_first: bool = False):
         super().__init__()
+        self.batch_first = batch_first
         self.film_gen = nn.Linear(cond_dim, feature_dim * 2)
         # Initialize to identity transform (gamma=0, beta=0)
         nn.init.zeros_(self.film_gen.weight)
         nn.init.zeros_(self.film_gen.bias)
 
     def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
-        # x shape: (Seq, Batch, Feature) or (Batch, Feature)
+        # x shape: (Seq, Batch, Feature) or (Batch, Seq, Feature) or (Batch, Feature)
         # cond shape: (Batch, Cond_Dim)
         
         film_params = self.film_gen(cond) # (Batch, feature_dim * 2)
         gamma, beta = film_params.chunk(2, dim=-1) # (Batch, feature), (Batch, feature)
         
         if x.dim() == 3:
-            # Broadcast to (Seq, Batch, Feature)
-            gamma = gamma.unsqueeze(0)
-            beta = beta.unsqueeze(0)
+            if self.batch_first:
+                # Broadcast to (Batch, Seq, Feature)
+                gamma = gamma.unsqueeze(1)
+                beta = beta.unsqueeze(1)
+            else:
+                # Broadcast to (Seq, Batch, Feature)
+                gamma = gamma.unsqueeze(0)
+                beta = beta.unsqueeze(0)
             
         return x * (1 + gamma) + beta
 

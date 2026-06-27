@@ -71,7 +71,7 @@ FinRL*/
 assistant_docs/
 
 # Local workspace models and scratch
-models/
+models/*
 scratch/
 
 .claude/
