@@ -86,8 +86,17 @@ def objective(trial: optuna.Trial):
     if batch_size > n_steps:
         raise optuna.TrialPruned()
         
+    import torch
+    
+    # Use explicitly requested device or fallback to auto-detection
+    if args.device != "auto":
+        device = args.device
+    else:
+        device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+        
     print(f"\n{'='*50}")
     print(f"🚀 Starting Trial {trial.number}")
+    print(f"🖥️  Target Device: {device.upper()}")
     print(f"⚙️ Parameters: {trial.params}")
     print(f"{'='*50}\n")
 
@@ -123,10 +132,7 @@ def objective(trial: optuna.Trial):
 
     # 3. Create Model
     from stable_baselines3 import PPO
-    import torch
     from agents.extractors import GatedTransformerExtractor, GatedGruExtractor, GatedCnnExtractor
-    
-    device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
     
     if extractor_type == "cnn":
         ext_class = GatedCnnExtractor
@@ -187,6 +193,7 @@ def objective(trial: optuna.Trial):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--n_trials", type=int, default=120)
+    parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda", "mps"], help="Force specific device (e.g. cpu)")
     args = parser.parse_args()
     
     print("🚀 Starting PPO Hyperparameter Optimization with Optuna")
