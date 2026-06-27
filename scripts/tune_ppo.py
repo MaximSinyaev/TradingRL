@@ -160,11 +160,14 @@ def objective(trial: optuna.Trial):
     )
     
     # 4. Train with Eval Pruning (Evaluating every ~100k steps)
+    from stable_baselines3.common.callbacks import ProgressBarCallback
+    
     eval_callback = TrialEvalCallback(eval_env, trial, n_eval_episodes=3, eval_freq=100000)
     wandb_callback = WandbCallback(verbose=0)
+    progress_callback = ProgressBarCallback()
     
     try:
-        model.learn(total_timesteps=1500000, callback=[eval_callback, wandb_callback])
+        model.learn(total_timesteps=1500000, callback=[eval_callback, wandb_callback, progress_callback])
     except (AssertionError, ValueError) as e:
         wandb.finish()
         raise optuna.TrialPruned()
